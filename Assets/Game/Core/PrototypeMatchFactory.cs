@@ -77,7 +77,8 @@ namespace LittleCiv.Core
                     TileId = centerPlacement.TileId,
                     Type = DistrictType.Government,
                     ControllerId = city.OwnerId,
-                    IsOperational = true
+                    IsOperational = true,
+                    AssignedCitizens = 1
                 });
                 state.Units.Add(new UnitState
                 {

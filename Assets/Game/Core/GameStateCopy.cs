@@ -42,7 +42,17 @@ namespace LittleCiv.Core
                     OwnerId = item.OwnerId,
                     WorldQ = item.WorldQ,
                     WorldR = item.WorldR,
-                    Population = item.Population
+                    Population = item.Population,
+                    GovernmentCitizens = item.GovernmentCitizens,
+                    Gold = item.Gold,
+                    StoredFood = item.StoredFood,
+                    GrowthProgress = item.GrowthProgress,
+                    FamineProgress = item.FamineProgress,
+                    ResearchPoints = item.ResearchPoints,
+                    LastFoodProduction = item.LastFoodProduction,
+                    LastGoldProduction = item.LastGoldProduction,
+                    LastScienceProduction = item.LastScienceProduction,
+                    LastCultureProduction = item.LastCultureProduction
                 });
             }
 
@@ -59,6 +69,7 @@ namespace LittleCiv.Core
                     GroundFood = item.GroundFood,
                     IsSharedBoundary = item.IsSharedBoundary,
                     DefenseBonusPercent = item.DefenseBonusPercent,
+                    ResourceType = item.ResourceType,
                     VisibleCityIds = item.VisibleCityIds == null
                         ? new List<EntityId>()
                         : new List<EntityId>(item.VisibleCityIds)
@@ -78,7 +89,9 @@ namespace LittleCiv.Core
                     CarriedFood = item.CarriedFood,
                     IsStarving = item.IsStarving,
                     RemainingMovement = item.RemainingMovement,
-                    HasAutomaticDefense = item.HasAutomaticDefense
+                    HasAutomaticDefense = item.HasAutomaticDefense,
+                    MaintenancePriority = item.MaintenancePriority,
+                    CreatedTurn = item.CreatedTurn
                 });
             }
 
@@ -92,7 +105,12 @@ namespace LittleCiv.Core
                     TileId = item.TileId,
                     Type = item.Type,
                     ControllerId = item.ControllerId,
-                    IsOperational = item.IsOperational
+                    IsOperational = item.IsOperational,
+                    AssignedCitizens = item.AssignedCitizens,
+                    RemainingConstructionTurns = item.RemainingConstructionTurns,
+                    CitizenRemovalPriority = item.CitizenRemovalPriority,
+                    MaintenancePriority = item.MaintenancePriority,
+                    IsMaintenanceSuspended = item.IsMaintenanceSuspended
                 });
             }
 

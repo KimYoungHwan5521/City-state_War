@@ -38,7 +38,8 @@ namespace LittleCiv.Core
         MissingCommandId = 1,
         UnknownPlayer = 2,
         WrongTurn = 3,
-        MissingCommandType = 4
+        MissingCommandType = 4,
+        InvalidPayload = 5
     }
 
     public enum CommandMutationResult

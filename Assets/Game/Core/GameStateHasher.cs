@@ -58,6 +58,16 @@ namespace LittleCiv.Core
                 Add(ref hash, item.WorldQ);
                 Add(ref hash, item.WorldR);
                 Add(ref hash, item.Population);
+                Add(ref hash, item.GovernmentCitizens);
+                Add(ref hash, item.Gold);
+                Add(ref hash, item.StoredFood);
+                Add(ref hash, item.GrowthProgress);
+                Add(ref hash, item.FamineProgress);
+                Add(ref hash, item.ResearchPoints);
+                Add(ref hash, item.LastFoodProduction);
+                Add(ref hash, item.LastGoldProduction);
+                Add(ref hash, item.LastScienceProduction);
+                Add(ref hash, item.LastCultureProduction);
             }
         }
 
@@ -75,6 +85,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.GroundFood);
                 Add(ref hash, item.IsSharedBoundary ? 1 : 0);
                 Add(ref hash, item.DefenseBonusPercent);
+                Add(ref hash, (int)item.ResourceType);
                 var visibleCities = item.VisibleCityIds == null
                     ? new List<EntityId>()
                     : new List<EntityId>(item.VisibleCityIds);
@@ -102,6 +113,8 @@ namespace LittleCiv.Core
                 Add(ref hash, item.IsStarving ? 1 : 0);
                 Add(ref hash, item.RemainingMovement);
                 Add(ref hash, item.HasAutomaticDefense ? 1 : 0);
+                Add(ref hash, item.MaintenancePriority);
+                Add(ref hash, item.CreatedTurn);
             }
         }
 
@@ -117,6 +130,11 @@ namespace LittleCiv.Core
                 Add(ref hash, (int)item.Type);
                 Add(ref hash, item.ControllerId.Value);
                 Add(ref hash, item.IsOperational ? 1 : 0);
+                Add(ref hash, item.AssignedCitizens);
+                Add(ref hash, item.RemainingConstructionTurns);
+                Add(ref hash, item.CitizenRemovalPriority);
+                Add(ref hash, item.MaintenancePriority);
+                Add(ref hash, item.IsMaintenanceSuspended ? 1 : 0);
             }
         }
 

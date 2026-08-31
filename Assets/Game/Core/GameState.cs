@@ -32,6 +32,15 @@ namespace LittleCiv.Core
         MotorizedSupply = 5
     }
 
+    public enum TileResourceType
+    {
+        None = 0,
+        Food = 1,
+        Commerce = 2,
+        Science = 3,
+        Culture = 4
+    }
+
     public enum VictoryType
     {
         None = 0,
@@ -43,7 +52,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 5;
+        public const int CurrentSchemaVersion = 9;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -100,6 +109,16 @@ namespace LittleCiv.Core
         public int WorldQ;
         public int WorldR;
         public int Population = 4;
+        public int GovernmentCitizens = 1;
+        public int Gold = 10;
+        public int StoredFood;
+        public int GrowthProgress;
+        public int FamineProgress;
+        public int ResearchPoints;
+        public int LastFoodProduction;
+        public int LastGoldProduction;
+        public int LastScienceProduction;
+        public int LastCultureProduction;
     }
 
     [Serializable]
@@ -113,6 +132,7 @@ namespace LittleCiv.Core
         public int GroundFood;
         public bool IsSharedBoundary;
         public int DefenseBonusPercent;
+        public TileResourceType ResourceType;
         public List<EntityId> VisibleCityIds = new List<EntityId>();
     }
 
@@ -128,6 +148,8 @@ namespace LittleCiv.Core
         public bool IsStarving;
         public int RemainingMovement;
         public bool HasAutomaticDefense;
+        public int MaintenancePriority;
+        public int CreatedTurn;
     }
 
     [Serializable]
@@ -139,5 +161,10 @@ namespace LittleCiv.Core
         public DistrictType Type;
         public EntityId ControllerId;
         public bool IsOperational = true;
+        public int AssignedCitizens;
+        public int RemainingConstructionTurns;
+        public int CitizenRemovalPriority;
+        public int MaintenancePriority;
+        public bool IsMaintenanceSuspended;
     }
 }

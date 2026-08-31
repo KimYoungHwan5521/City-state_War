@@ -67,6 +67,77 @@ namespace LittleCiv.Core
                 if (phase == TurnPhase.CityProduction)
                 {
                     ResetUnitMovement(state);
+                    CityEconomyResolver.ResolveProduction(state);
+                }
+                if (phase == TurnPhase.Maintenance)
+                {
+                    var maintenance = MaintenanceResolver.Resolve(state);
+                    for (var unitIndex = 0; unitIndex < maintenance.DisbandedUnits.Count; unitIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitDisbanded,
+                            maintenance.DisbandedUnits[unitIndex]));
+                    }
+                    for (var districtIndex = 0; districtIndex < maintenance.SuspendedDistricts.Count; districtIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.DistrictMaintenanceSuspended,
+                            maintenance.SuspendedDistricts[districtIndex]));
+                    }
+                }
+                if (phase == TurnPhase.ConstructionTrainingProjects)
+                {
+                    var completedDistricts = DistrictConstructionResolver.Advance(state);
+                    for (var completedIndex = 0; completedIndex < completedDistricts.Count; completedIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.DistrictConstructionCompleted,
+                            completedDistricts[completedIndex]));
+                    }
+                }
+                if (phase == TurnPhase.FoodRecoveryStarvation)
+                {
+                    CityFoodResolver.ResolveStorage(state);
+                }
+                if (phase == TurnPhase.Population)
+                {
+                    var grownCities = CityPopulationResolver.ResolveGrowth(state);
+                    for (var grownIndex = 0; grownIndex < grownCities.Count; grownIndex++)
+                    {
+                        var grownCity = FindCity(state, grownCities[grownIndex]);
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.PopulationIncreased,
+                            grownCity.OwnerId,
+                            grownCity.Id,
+                            grownCity.Population,
+                            grownCity.GrowthProgress));
+                    }
+
+                    var diminishedCities = CityPopulationResolver.ResolveFamine(state);
+                    for (var diminishedIndex = 0; diminishedIndex < diminishedCities.Count; diminishedIndex++)
+                    {
+                        var diminishedCity = FindCity(state, diminishedCities[diminishedIndex]);
+                        var removedDistrictId = CitizenAssignmentResolver.RemoveExcessCitizen(state, diminishedCity);
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.PopulationDecreased,
+                            diminishedCity.OwnerId,
+                            diminishedCity.Id,
+                            diminishedCity.Population,
+                            diminishedCity.FamineProgress));
+                        if (removedDistrictId.IsValid)
+                        {
+                            resolution.Events.Add(CreateEvent(
+                                turnNumber,
+                                GameEventType.CitizenAssignmentRemoved,
+                                diminishedCity.Id,
+                                removedDistrictId));
+                        }
+                    }
                 }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 
@@ -98,6 +169,16 @@ namespace LittleCiv.Core
             return resolution;
         }
 
+        private static CityState FindCity(GameState state, EntityId cityId)
+        {
+            for (var index = 0; index < state.Cities.Count; index++)
+            {
+                if (state.Cities[index].Id == cityId) return state.Cities[index];
+            }
+
+            throw new InvalidOperationException("Population resolver returned an unknown city.");
+        }
+
         private void ResolveCommandsForPhase(
             GameState state,
             List<GameCommand> commands,
@@ -114,9 +195,22 @@ namespace LittleCiv.Core
                 }
 
                 var validation = CommandValidator.ValidateEnvelope(state, command);
+                DistrictState startedDistrict = null;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
+                if (accepted && command.Type == GameCommandType.StartDistrict &&
+                    !DistrictConstructionResolver.TryStart(state, command, out startedDistrict))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.SetPriority &&
+                    !TrySetPriority(state, command))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
                 resolution.Events.Add(CreateEvent(
                     state.TurnNumber,
                     accepted ? GameEventType.CommandAccepted : GameEventType.CommandRejected,
@@ -127,8 +221,25 @@ namespace LittleCiv.Core
                 if (accepted)
                 {
                     resolution.Commands.Add(GameCommandCopy.Clone(command));
+                    if (startedDistrict != null)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.DistrictConstructionStarted,
+                            command.PlayerId,
+                            startedDistrict.Id,
+                            (int)startedDistrict.Type,
+                            startedDistrict.RemainingConstructionTurns));
+                    }
                 }
             }
+        }
+
+        private static bool TrySetPriority(GameState state, GameCommand command)
+        {
+            return command.SecondaryValue == 1
+                ? MaintenanceResolver.TrySetPriority(state, command)
+                : CitizenAssignmentResolver.TrySetRemovalPriority(state, command);
         }
 
         private void AddPlanningDefaults(

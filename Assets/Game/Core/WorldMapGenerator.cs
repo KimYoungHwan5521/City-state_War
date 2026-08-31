@@ -139,6 +139,7 @@ namespace LittleCiv.Core
             }
 
             state.MapTopology = topology;
+            CityResourceGenerator.Populate(state);
             return topology;
         }
 

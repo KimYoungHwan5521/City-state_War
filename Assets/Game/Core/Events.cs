@@ -16,7 +16,14 @@ namespace LittleCiv.Core
         VictoryTriggered = 9,
         TurnEnded = 10,
         PhaseStarted = 11,
-        DefaultActionApplied = 12
+        DefaultActionApplied = 12,
+        DistrictConstructionStarted = 13,
+        DistrictConstructionCompleted = 14,
+        PopulationIncreased = 15,
+        PopulationDecreased = 16,
+        CitizenAssignmentRemoved = 17,
+        UnitDisbanded = 18,
+        DistrictMaintenanceSuspended = 19
     }
 
     [Serializable]
