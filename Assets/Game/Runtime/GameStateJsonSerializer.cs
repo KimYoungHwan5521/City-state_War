@@ -37,5 +37,37 @@ namespace LittleCiv.Runtime
 
             return state;
         }
+
+        public static string SerializeJournal(MatchJournal journal, bool prettyPrint = false)
+        {
+            if (journal == null)
+            {
+                throw new ArgumentNullException(nameof(journal));
+            }
+
+            return JsonUtility.ToJson(journal, prettyPrint);
+        }
+
+        public static MatchJournal DeserializeJournal(string json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new ArgumentException("A journal payload is required.", nameof(json));
+            }
+
+            var journal = JsonUtility.FromJson<MatchJournal>(json);
+            if (journal == null || journal.InitialState == null)
+            {
+                throw new InvalidOperationException("The journal payload could not be deserialized.");
+            }
+
+            if (journal.InitialState.SchemaVersion != GameState.CurrentSchemaVersion)
+            {
+                throw new NotSupportedException(
+                    $"Journal schema {journal.InitialState.SchemaVersion} is not supported by schema {GameState.CurrentSchemaVersion}.");
+            }
+
+            return journal;
+        }
     }
 }
