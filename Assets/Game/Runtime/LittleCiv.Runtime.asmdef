@@ -2,7 +2,8 @@
   "name": "LittleCiv.Runtime",
   "rootNamespace": "LittleCiv.Runtime",
   "references": [
-    "LittleCiv.Core"
+    "LittleCiv.Core",
+    "Unity.InputSystem"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

@@ -26,6 +26,7 @@ namespace LittleCiv.Core
             HashTiles(ref hash, state.Tiles);
             HashUnits(ref hash, state.Units);
             HashDistricts(ref hash, state.Districts);
+            HashMapTopology(ref hash, state.MapTopology);
             return hash;
         }
 
@@ -50,6 +51,7 @@ namespace LittleCiv.Core
             foreach (var item in items)
             {
                 Add(ref hash, item.Id.Value);
+                Add(ref hash, item.Name);
                 Add(ref hash, item.OwnerId.Value);
                 Add(ref hash, item.WorldQ);
                 Add(ref hash, item.WorldR);
@@ -69,6 +71,16 @@ namespace LittleCiv.Core
                 Add(ref hash, item.R);
                 Add(ref hash, item.ControllerId.Value);
                 Add(ref hash, item.GroundFood);
+                Add(ref hash, item.IsSharedBoundary ? 1 : 0);
+                var visibleCities = item.VisibleCityIds == null
+                    ? new List<EntityId>()
+                    : new List<EntityId>(item.VisibleCityIds);
+                visibleCities.Sort();
+                Add(ref hash, visibleCities.Count);
+                foreach (var cityId in visibleCities)
+                {
+                    Add(ref hash, cityId.Value);
+                }
             }
         }
 
@@ -103,6 +115,35 @@ namespace LittleCiv.Core
             }
         }
 
+        private static void HashMapTopology(ref ulong hash, WorldMapTopology topology)
+        {
+            var views = topology == null || topology.CityViews == null
+                ? new List<CityMapView>()
+                : new List<CityMapView>(topology.CityViews);
+            views.Sort((left, right) => left.CityId.CompareTo(right.CityId));
+            Add(ref hash, views.Count);
+            foreach (var view in views)
+            {
+                Add(ref hash, view.CityId.Value);
+                var placements = view.Tiles == null
+                    ? new List<CityTilePlacement>()
+                    : new List<CityTilePlacement>(view.Tiles);
+                placements.Sort((left, right) =>
+                {
+                    var qComparison = left.LocalQ.CompareTo(right.LocalQ);
+                    return qComparison != 0 ? qComparison : left.LocalR.CompareTo(right.LocalR);
+                });
+                Add(ref hash, placements.Count);
+                foreach (var placement in placements)
+                {
+                    Add(ref hash, placement.TileId.Value);
+                    Add(ref hash, placement.LocalQ);
+                    Add(ref hash, placement.LocalR);
+                    Add(ref hash, placement.IsBuildable ? 1 : 0);
+                }
+            }
+        }
+
         private static List<T> SortedCopy<T>(List<T> source, Func<T, long> keySelector)
         {
             var result = source == null ? new List<T>() : new List<T>(source);
@@ -111,6 +152,17 @@ namespace LittleCiv.Core
         }
 
         private static void Add(ref ulong hash, int value) => Add(ref hash, (long)value);
+
+        private static void Add(ref ulong hash, string value)
+        {
+            value = value ?? string.Empty;
+
+            Add(ref hash, value.Length);
+            foreach (var character in value)
+            {
+                Add(ref hash, character);
+            }
+        }
 
         private static void Add(ref ulong hash, long value)
         {

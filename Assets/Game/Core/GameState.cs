@@ -35,7 +35,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 1;
+        public const int CurrentSchemaVersion = 2;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -46,6 +46,7 @@ namespace LittleCiv.Core
         public List<TileState> Tiles = new List<TileState>();
         public List<UnitState> Units = new List<UnitState>();
         public List<DistrictState> Districts = new List<DistrictState>();
+        public WorldMapTopology MapTopology = new WorldMapTopology();
 
         public static GameState CreateNew(long matchSeed)
         {
@@ -82,6 +83,7 @@ namespace LittleCiv.Core
     public sealed class CityState
     {
         public EntityId Id;
+        public string Name;
         public EntityId OwnerId;
         public int WorldQ;
         public int WorldR;
@@ -97,6 +99,8 @@ namespace LittleCiv.Core
         public int R;
         public EntityId ControllerId;
         public int GroundFood;
+        public bool IsSharedBoundary;
+        public List<EntityId> VisibleCityIds = new List<EntityId>();
     }
 
     [Serializable]
