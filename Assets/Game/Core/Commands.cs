@@ -41,6 +41,15 @@ namespace LittleCiv.Core
         MissingCommandType = 4
     }
 
+    public enum CommandMutationResult
+    {
+        Accepted = 0,
+        SessionClosed = 1,
+        PlayerAlreadyConfirmed = 2,
+        InvalidCommand = 3,
+        CommandNotFound = 4
+    }
+
     public static class CommandValidator
     {
         public static CommandValidationError ValidateEnvelope(GameState state, GameCommand command)
@@ -86,6 +95,30 @@ namespace LittleCiv.Core
             }
 
             return false;
+        }
+    }
+
+    public static class GameCommandCopy
+    {
+        public static GameCommand Clone(GameCommand source)
+        {
+            if (source == null)
+            {
+                throw new ArgumentNullException(nameof(source));
+            }
+
+            return new GameCommand
+            {
+                CommandId = source.CommandId,
+                PlayerId = source.PlayerId,
+                TurnNumber = source.TurnNumber,
+                Type = source.Type,
+                SubjectId = source.SubjectId,
+                TargetId = source.TargetId,
+                PrimaryValue = source.PrimaryValue,
+                SecondaryValue = source.SecondaryValue,
+                Path = source.Path == null ? new List<EntityId>() : new List<EntityId>(source.Path)
+            };
         }
     }
 }

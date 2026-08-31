@@ -60,7 +60,35 @@ namespace LittleCiv.Core
             }
 
             WorldMapGenerator.PopulateTiles(state);
+            AddStartingGovernmentAndMilitia(state);
             return state;
+        }
+
+        private static void AddStartingGovernmentAndMilitia(GameState state)
+        {
+            foreach (var city in state.Cities)
+            {
+                var centerPlacement = state.MapTopology.FindView(city.Id).Tiles.Find(
+                    tile => tile.LocalQ == 0 && tile.LocalR == 0);
+                state.Districts.Add(new DistrictState
+                {
+                    Id = state.AllocateId(),
+                    CityId = city.Id,
+                    TileId = centerPlacement.TileId,
+                    Type = DistrictType.Government,
+                    ControllerId = city.OwnerId,
+                    IsOperational = true
+                });
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(),
+                    OwnerId = city.OwnerId,
+                    TileId = centerPlacement.TileId,
+                    Type = UnitType.Militia,
+                    HitPoints = 16,
+                    CarriedFood = 6
+                });
+            }
         }
     }
 }

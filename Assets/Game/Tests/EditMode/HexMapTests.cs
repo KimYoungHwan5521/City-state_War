@@ -141,6 +141,44 @@ namespace LittleCiv.Tests
             }
         }
 
+        [Test]
+        public void PrototypeMatch_StartsEveryCityWithGovernmentAndMilitiaAtCenter()
+        {
+            var state = PrototypeMatchFactory.Create(1001);
+
+            Assert.That(state.Districts.Count, Is.EqualTo(10));
+            Assert.That(state.Units.Count, Is.EqualTo(10));
+            foreach (var city in state.Cities)
+            {
+                var center = state.MapTopology.FindView(city.Id).Tiles.Single(
+                    tile => tile.LocalQ == 0 && tile.LocalR == 0);
+                var government = state.Districts.Single(district => district.CityId == city.Id);
+                var militia = state.Units.Single(unit => unit.TileId == center.TileId);
+                Assert.That(government.TileId, Is.EqualTo(center.TileId));
+                Assert.That(government.Type, Is.EqualTo(DistrictType.Government));
+                Assert.That(militia.OwnerId, Is.EqualTo(city.OwnerId));
+                Assert.That(militia.Type, Is.EqualTo(UnitType.Militia));
+                Assert.That(militia.HitPoints, Is.EqualTo(16));
+                Assert.That(militia.CarriedFood, Is.EqualTo(6));
+            }
+        }
+
+        [Test]
+        public void SharedTileUnitSelection_ResolvesEveryConnectedCity()
+        {
+            var state = PrototypeMatchFactory.Create(1001);
+            var sharedTile = state.Tiles.First(tile => tile.VisibleCityIds.Count == 3);
+            var unit = state.Units[0];
+            unit.TileId = sharedTile.Id;
+
+            var visibleCities = MapVisibilityResolver.ResolveCitiesForTile(
+                state,
+                unit.TileId,
+                state.Cities[0].Id);
+
+            Assert.That(visibleCities, Is.EqualTo(sharedTile.VisibleCityIds.OrderBy(id => id.Value).ToList()));
+        }
+
         private static GameState CreatePrototypeState()
         {
             var state = GameState.CreateNew(1001);

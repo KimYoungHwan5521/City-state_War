@@ -20,6 +20,9 @@ namespace LittleCiv.Runtime
         private Material boundaryMaterial;
         private Material governmentMaterial;
         private Material selectedMaterial;
+        private Material playerOneUnitMaterial;
+        private Material playerTwoUnitMaterial;
+        private Material neutralUnitMaterial;
 
         private void Start()
         {
@@ -43,13 +46,8 @@ namespace LittleCiv.Runtime
         {
             selectedTileId = tileId;
             var tile = state.Tiles.Find(item => item.Id == tileId);
-            if (tile == null || tile.VisibleCityIds == null || tile.VisibleCityIds.Count <= 1)
-            {
-                ShowCities(new[] { state.Cities[focusedCityIndex].Id });
-                return;
-            }
-
-            ShowCities(tile.VisibleCityIds);
+            var fallbackCityId = state.Cities[focusedCityIndex].Id;
+            ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, tile.Id, fallbackCityId));
         }
 
         private void ShowCities(IEnumerable<GameEntityId> cityIds)
@@ -97,7 +95,35 @@ namespace LittleCiv.Runtime
                 var collider = tileObject.AddComponent<MeshCollider>();
                 collider.sharedMesh = filter.sharedMesh;
                 tileObject.AddComponent<PrototypeHexTileView>().Initialize(this, placement.TileId);
+                CreateUnitsOnTile(tileObject.transform, placement.TileId);
             }
+        }
+
+        private void CreateUnitsOnTile(Transform tileTransform, GameEntityId tileId)
+        {
+            var units = state.Units.FindAll(unit => unit.TileId == tileId);
+            units.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var index = 0; index < units.Count; index++)
+            {
+                var unit = units[index];
+                var unitObject = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                unitObject.name = $"{unit.Type} [{unit.Id}]";
+                unitObject.transform.SetParent(tileTransform, false);
+                unitObject.transform.localPosition = new Vector3((index - ((units.Count - 1) * 0.5f)) * 0.32f, 0.14f, 0f);
+                unitObject.transform.localScale = new Vector3(0.26f, 0.12f, 0.26f);
+                unitObject.GetComponent<MeshRenderer>().sharedMaterial = ResolveUnitMaterial(unit.OwnerId);
+                unitObject.AddComponent<PrototypeUnitView>().Initialize(this, unit);
+            }
+        }
+
+        private Material ResolveUnitMaterial(GameEntityId ownerId)
+        {
+            var owner = state.Players.Find(player => player.Id == ownerId);
+            if (owner == null || owner.Slot == PlayerSlot.Neutral)
+            {
+                return neutralUnitMaterial;
+            }
+            return owner.Slot == PlayerSlot.PlayerOne ? playerOneUnitMaterial : playerTwoUnitMaterial;
         }
 
         private Material ResolveMaterial(CityTilePlacement placement, TileState tile)
@@ -152,6 +178,9 @@ namespace LittleCiv.Runtime
             boundaryMaterial = CreateMaterial(new Color(0.35f, 0.38f, 0.42f));
             governmentMaterial = CreateMaterial(new Color(0.80f, 0.60f, 0.18f));
             selectedMaterial = CreateMaterial(new Color(0.20f, 0.72f, 0.92f));
+            playerOneUnitMaterial = CreateMaterial(new Color(0.18f, 0.45f, 0.95f));
+            playerTwoUnitMaterial = CreateMaterial(new Color(0.92f, 0.23f, 0.20f));
+            neutralUnitMaterial = CreateMaterial(new Color(0.78f, 0.78f, 0.78f));
         }
 
         private static Material CreateMaterial(Color color)
