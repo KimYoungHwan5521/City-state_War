@@ -97,6 +97,8 @@ namespace LittleCiv.Core
                 Add(ref hash, item.HitPoints);
                 Add(ref hash, item.CarriedFood);
                 Add(ref hash, item.IsStarving ? 1 : 0);
+                Add(ref hash, item.RemainingMovement);
+                Add(ref hash, item.HasAutomaticDefense ? 1 : 0);
             }
         }
 

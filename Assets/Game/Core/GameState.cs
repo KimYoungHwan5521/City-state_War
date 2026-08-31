@@ -35,7 +35,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 2;
+        public const int CurrentSchemaVersion = 3;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -113,6 +113,8 @@ namespace LittleCiv.Core
         public int HitPoints;
         public int CarriedFood;
         public bool IsStarving;
+        public int RemainingMovement;
+        public bool HasAutomaticDefense;
     }
 
     [Serializable]

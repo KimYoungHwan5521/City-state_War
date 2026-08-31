@@ -73,7 +73,9 @@ namespace LittleCiv.Core
                     Type = item.Type,
                     HitPoints = item.HitPoints,
                     CarriedFood = item.CarriedFood,
-                    IsStarving = item.IsStarving
+                    IsStarving = item.IsStarving,
+                    RemainingMovement = item.RemainingMovement,
+                    HasAutomaticDefense = item.HasAutomaticDefense
                 });
             }
 

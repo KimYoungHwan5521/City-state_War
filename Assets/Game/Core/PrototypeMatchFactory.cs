@@ -86,7 +86,8 @@ namespace LittleCiv.Core
                     TileId = centerPlacement.TileId,
                     Type = UnitType.Militia,
                     HitPoints = 16,
-                    CarriedFood = 6
+                    CarriedFood = 6,
+                    RemainingMovement = UnitRules.Movement(UnitType.Militia)
                 });
             }
         }

@@ -62,6 +62,10 @@ namespace LittleCiv.Core
                     turnNumber,
                     GameEventType.PhaseStarted,
                     primaryValue: phaseValue));
+                if (phase == TurnPhase.CityProduction)
+                {
+                    ResetUnitMovement(state);
+                }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 
                 if (phase == TurnPhase.TradeAndOrders)
@@ -71,7 +75,9 @@ namespace LittleCiv.Core
 
                 if (phase == TurnPhase.MovementCombatOccupation)
                 {
+                    var blockedUnits = ResolveMovementCommands(state, resolution);
                     AddUnitWaitDefaults(state, sortedCommands, resolution);
+                    FinalizeAutomaticDefense(state, blockedUnits);
                 }
             }
 
@@ -166,6 +172,61 @@ namespace LittleCiv.Core
                     unit.OwnerId,
                     DefaultActionType.UnitWaits,
                     unit.Id));
+            }
+        }
+
+        private HashSet<EntityId> ResolveMovementCommands(GameState state, TurnResolution resolution)
+        {
+            var blockedUnits = new HashSet<EntityId>();
+            for (var i = 0; i < resolution.Commands.Count; i++)
+            {
+                var command = resolution.Commands[i];
+                if (command.Type != GameCommandType.MoveUnit) continue;
+                var movement = MovementResolver.Resolve(state, command);
+                if (movement.StepsMoved > 0)
+                {
+                    resolution.Events.Add(CreateEvent(
+                        state.TurnNumber,
+                        GameEventType.UnitMoved,
+                        movement.UnitId,
+                        movement.FinalTileId,
+                        movement.StepsMoved));
+                }
+
+                if (movement.StopReason != MovementStopReason.Completed)
+                {
+                    blockedUnits.Add(movement.UnitId);
+                    resolution.Events.Add(CreateEvent(
+                        state.TurnNumber,
+                        GameEventType.MovementBlocked,
+                        movement.UnitId,
+                        movement.FinalTileId,
+                        movement.StepsMoved,
+                        (int)movement.StopReason));
+                }
+            }
+
+            return blockedUnits;
+        }
+
+        private static void ResetUnitMovement(GameState state)
+        {
+            for (var i = 0; i < state.Units.Count; i++)
+            {
+                var unit = state.Units[i];
+                unit.RemainingMovement = UnitRules.Movement(unit.Type);
+                unit.HasAutomaticDefense = false;
+            }
+        }
+
+        private static void FinalizeAutomaticDefense(GameState state, HashSet<EntityId> blockedUnits)
+        {
+            for (var i = 0; i < state.Units.Count; i++)
+            {
+                var unit = state.Units[i];
+                if (unit.RemainingMovement <= 0 || blockedUnits.Contains(unit.Id)) continue;
+                unit.HasAutomaticDefense = true;
+                unit.RemainingMovement = 0;
             }
         }
 
