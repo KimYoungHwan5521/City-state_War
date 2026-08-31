@@ -81,6 +81,83 @@ namespace LittleCiv.Tests
             Assert.That(result.ManeuverRequests.Any(item => item.UnitId == fixture.UnitOne.Id), Is.True);
         }
 
+        [Test]
+        public void SharedTile_CommandRegistrationOrderDoesNotChangePriority()
+        {
+            var forward = CreateFixture(shared: true, controllerSlot: PlayerSlot.Neutral);
+            var reverse = CreateFixture(shared: true, controllerSlot: PlayerSlot.Neutral);
+            reverse.Commands.Reverse();
+
+            var forwardPlan = MovementPriorityResolver.Build(forward.State, forward.Commands);
+            var reversePlan = MovementPriorityResolver.Build(reverse.State, reverse.Commands);
+
+            Assert.That(forwardPlan.OrderedCommands.Select(item => item.CommandId),
+                Is.EqualTo(reversePlan.OrderedCommands.Select(item => item.CommandId)));
+            Assert.That(SortedBlockedReasons(forwardPlan), Is.EqualTo(SortedBlockedReasons(reversePlan)));
+        }
+
+        [Test]
+        public void SwapConflict_CommandRegistrationOrderDoesNotChangeAttackerRoles()
+        {
+            var forward = CreateSwapFixture();
+            var reverse = CreateSwapFixture();
+            reverse.Commands.Reverse();
+
+            var forwardPlan = MovementPriorityResolver.Build(forward.State, forward.Commands);
+            var reversePlan = MovementPriorityResolver.Build(reverse.State, reverse.Commands);
+
+            Assert.That(forwardPlan.OrderedCommands, Is.Empty);
+            Assert.That(reversePlan.OrderedCommands, Is.Empty);
+            Assert.That(SortedBlockedReasons(forwardPlan), Is.EqualTo(SortedBlockedReasons(reversePlan)));
+        }
+
+        [Test]
+        public void TurnProcessor_CommandRegistrationOrderProducesIdenticalStateAndEvents()
+        {
+            var forward = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerTwo);
+            var reverse = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerTwo);
+            reverse.Commands.Reverse();
+
+            var forwardResult = new TurnProcessor().Resolve(forward.State, forward.Commands);
+            var reverseResult = new TurnProcessor().Resolve(reverse.State, reverse.Commands);
+
+            Assert.That(forwardResult.ResultStateHash, Is.EqualTo(reverseResult.ResultStateHash));
+            Assert.That(EventSignatures(forwardResult), Is.EqualTo(EventSignatures(reverseResult)));
+            Assert.That(ManeuverSignatures(forwardResult), Is.EqualTo(ManeuverSignatures(reverseResult)));
+        }
+
+        private static Fixture CreateSwapFixture()
+        {
+            var fixture = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerOne);
+            fixture.Commands[0].Path = new List<EntityId> { fixture.PlayerTwoStart };
+            fixture.Commands[1].Path = new List<EntityId> { fixture.PlayerOneStart };
+            return fixture;
+        }
+
+        private static List<string> SortedBlockedReasons(MovementPriorityPlan plan)
+        {
+            return plan.BlockedCommandReasons
+                .OrderBy(item => item.Key)
+                .Select(item => item.Key + ":" + (int)item.Value)
+                .ToList();
+        }
+
+        private static List<string> EventSignatures(TurnResolution resolution)
+        {
+            return resolution.Events.Select(item =>
+                item.Sequence + ":" + item.TurnNumber + ":" + (int)item.Type + ":" +
+                item.SourceId + ":" + item.TargetId + ":" + item.PrimaryValue + ":" +
+                item.SecondaryValue).ToList();
+        }
+
+        private static List<string> ManeuverSignatures(TurnResolution resolution)
+        {
+            return resolution.ManeuverRequests.Select(item =>
+                item.PlayerId + ":" + item.UnitId + ":" + item.LastValidTileId + ":" +
+                item.BlockedTileId + ":" + item.RemainingMovement + ":" + (int)item.StopReason)
+                .ToList();
+        }
+
         private static Fixture CreateFixture(bool shared, PlayerSlot controllerSlot)
         {
             var state = GameState.CreateNew(777);
