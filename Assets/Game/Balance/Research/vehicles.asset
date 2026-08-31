@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 120eae6a303f1b04dbe9505170a4fcb1, type: 3}
+  m_Name: vehicles
+  m_EditorClassIdentifier: LittleCiv.Data::LittleCiv.Data.ResearchDefinition
+  Id: vehicles
+  DisplayName: "\uCC28\uB7C9"
+  ScienceCost: 60
+  PrerequisiteIds:
+  - gunpowder
+  Effects:
+  - Type: 2
+    TargetId: mechanized-infantry
+    Value: 0
+  - Type: 2
+    TargetId: motorized-supply
+    Value: 0

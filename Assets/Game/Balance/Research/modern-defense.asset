@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 120eae6a303f1b04dbe9505170a4fcb1, type: 3}
+  m_Name: modern-defense
+  m_EditorClassIdentifier: LittleCiv.Data::LittleCiv.Data.ResearchDefinition
+  Id: modern-defense
+  DisplayName: "\uD604\uB300 \uBC29\uC5B4\uCCB4\uACC4"
+  ScienceCost: 60
+  PrerequisiteIds:
+  - advanced-fortification
+  Effects:
+  - Type: 3
+    TargetId: modern-defense
+    Value: 0

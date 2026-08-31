@@ -1,0 +1,26 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c4bea1ac7853ca7458a9c279941dc984, type: 3}
+  m_Name: commerce
+  m_EditorClassIdentifier: LittleCiv.Data::LittleCiv.Data.DistrictDefinition
+  Id: commerce
+  DisplayName: "\uC0C1\uC5C5\uC9C0\uAD6C"
+  Type: 2
+  RequiredResearchId: 
+  ConstructionTurns: 3
+  YieldType: 2
+  BaseYield: 2
+  ResourceTileBonus: 2
+  SameDistrictAdjacencyBonus: 1
+  MaxAdjacencyBonus: 2
+  MaintenanceGold: 0
+  MaxPerCity: 0

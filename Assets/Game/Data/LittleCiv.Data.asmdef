@@ -1,0 +1,16 @@
+{
+  "name": "LittleCiv.Data",
+  "rootNamespace": "LittleCiv.Data",
+  "references": [
+    "LittleCiv.Core"
+  ],
+  "includePlatforms": [],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}
