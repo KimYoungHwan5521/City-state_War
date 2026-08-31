@@ -12,7 +12,9 @@ namespace LittleCiv.Core
         NonAdjacentTile = 4,
         InsufficientMovement = 5,
         EnemyOccupied = 6,
-        TileCapacityReached = 7
+        TileCapacityReached = 7,
+        PriorityLost = 8,
+        SwapConflict = 9
     }
 
     public sealed class MovementResult

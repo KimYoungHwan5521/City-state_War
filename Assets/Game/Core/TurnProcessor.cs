@@ -35,6 +35,7 @@ namespace LittleCiv.Core
         public int ResolvedTurnNumber;
         public readonly List<GameCommand> Commands = new List<GameCommand>();
         public readonly List<GameEvent> Events = new List<GameEvent>();
+        public readonly List<ManeuverRequest> ManeuverRequests = new List<ManeuverRequest>();
         public ulong ResultStateHash;
     }
 
@@ -46,6 +47,7 @@ namespace LittleCiv.Core
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (commands == null) throw new ArgumentNullException(nameof(commands));
+            if (state.IsGameOver) throw new InvalidOperationException("A completed match cannot resolve another turn.");
 
             var turnNumber = state.TurnNumber;
             var resolution = new TurnResolution { ResolvedTurnNumber = turnNumber };
@@ -78,6 +80,15 @@ namespace LittleCiv.Core
                     var blockedUnits = ResolveMovementCommands(state, resolution);
                     AddUnitWaitDefaults(state, sortedCommands, resolution);
                     FinalizeAutomaticDefense(state, blockedUnits);
+                }
+
+                if (phase == TurnPhase.ConquestVictory && state.Victory == VictoryType.Conquest)
+                {
+                    resolution.Events.Add(CreateEvent(
+                        turnNumber,
+                        GameEventType.VictoryTriggered,
+                        state.WinnerId,
+                        primaryValue: (int)VictoryType.Conquest));
                 }
             }
 
@@ -178,10 +189,30 @@ namespace LittleCiv.Core
         private HashSet<EntityId> ResolveMovementCommands(GameState state, TurnResolution resolution)
         {
             var blockedUnits = new HashSet<EntityId>();
-            for (var i = 0; i < resolution.Commands.Count; i++)
+            var priorityPlan = MovementPriorityResolver.Build(state, resolution.Commands);
+            var blockedCommandIds = new List<EntityId>(priorityPlan.BlockedCommandReasons.Keys);
+            blockedCommandIds.Sort();
+            for (var blockedIndex = 0; blockedIndex < blockedCommandIds.Count; blockedIndex++)
             {
-                var command = resolution.Commands[i];
-                if (command.Type != GameCommandType.MoveUnit) continue;
+                var blockedCommandId = blockedCommandIds[blockedIndex];
+                var blockedReason = priorityPlan.BlockedCommandReasons[blockedCommandId];
+                var command = FindCommand(resolution.Commands, blockedCommandId);
+                if (command == null) continue;
+                var unit = FindUnit(state, command.SubjectId);
+                blockedUnits.Add(command.SubjectId);
+                AddManeuverRequest(resolution, command, unit, 0, blockedReason);
+                resolution.Events.Add(CreateEvent(
+                    state.TurnNumber,
+                    GameEventType.MovementBlocked,
+                    command.SubjectId,
+                    unit == null ? default : unit.TileId,
+                    0,
+                    (int)blockedReason));
+            }
+
+            for (var i = 0; i < priorityPlan.OrderedCommands.Count; i++)
+            {
+                var command = priorityPlan.OrderedCommands[i];
                 var movement = MovementResolver.Resolve(state, command);
                 if (movement.StepsMoved > 0)
                 {
@@ -191,11 +222,30 @@ namespace LittleCiv.Core
                         movement.UnitId,
                         movement.FinalTileId,
                         movement.StepsMoved));
+                    var occupation = OccupationResolver.Resolve(
+                        state,
+                        command.PlayerId,
+                        movement.FinalTileId);
+                    if (occupation.DistrictOccupied)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.DistrictOccupied,
+                            command.PlayerId,
+                            occupation.DistrictId,
+                            (int)occupation.DistrictType));
+                    }
                 }
 
                 if (movement.StopReason != MovementStopReason.Completed)
                 {
                     blockedUnits.Add(movement.UnitId);
+                    AddManeuverRequest(
+                        resolution,
+                        command,
+                        FindUnit(state, movement.UnitId),
+                        movement.StepsMoved,
+                        movement.StopReason);
                     resolution.Events.Add(CreateEvent(
                         state.TurnNumber,
                         GameEventType.MovementBlocked,
@@ -207,6 +257,53 @@ namespace LittleCiv.Core
             }
 
             return blockedUnits;
+        }
+
+        private static void AddManeuverRequest(
+            TurnResolution resolution,
+            GameCommand command,
+            UnitState unit,
+            int completedSteps,
+            MovementStopReason reason)
+        {
+            if (unit == null || unit.RemainingMovement <= 0 ||
+                (reason != MovementStopReason.EnemyOccupied &&
+                 reason != MovementStopReason.PriorityLost &&
+                 reason != MovementStopReason.SwapConflict))
+            {
+                return;
+            }
+
+            var blockedTile = command.Path != null && completedSteps < command.Path.Count
+                ? command.Path[completedSteps]
+                : default;
+            resolution.ManeuverRequests.Add(new ManeuverRequest
+            {
+                PlayerId = unit.OwnerId,
+                UnitId = unit.Id,
+                LastValidTileId = unit.TileId,
+                BlockedTileId = blockedTile,
+                RemainingMovement = unit.RemainingMovement,
+                StopReason = reason
+            });
+        }
+
+        private static GameCommand FindCommand(List<GameCommand> commands, EntityId commandId)
+        {
+            for (var i = 0; i < commands.Count; i++)
+            {
+                if (commands[i].CommandId == commandId) return commands[i];
+            }
+            return null;
+        }
+
+        private static UnitState FindUnit(GameState state, EntityId unitId)
+        {
+            for (var i = 0; i < state.Units.Count; i++)
+            {
+                if (state.Units[i].Id == unitId) return state.Units[i];
+            }
+            return null;
         }
 
         private static void ResetUnitMovement(GameState state)
@@ -225,9 +322,20 @@ namespace LittleCiv.Core
             {
                 var unit = state.Units[i];
                 if (unit.RemainingMovement <= 0 || blockedUnits.Contains(unit.Id)) continue;
+                var tile = FindTile(state, unit.TileId);
+                if (tile != null && tile.IsSharedBoundary) continue;
                 unit.HasAutomaticDefense = true;
                 unit.RemainingMovement = 0;
             }
+        }
+
+        private static TileState FindTile(GameState state, EntityId tileId)
+        {
+            for (var i = 0; i < state.Tiles.Count; i++)
+            {
+                if (state.Tiles[i].Id == tileId) return state.Tiles[i];
+            }
+            return null;
         }
 
         private GameEvent CreateDefaultEvent(

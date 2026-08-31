@@ -20,6 +20,8 @@ namespace LittleCiv.Core
             Add(ref hash, state.MatchSeed);
             Add(ref hash, state.TurnNumber);
             Add(ref hash, state.NextEntityId);
+            Add(ref hash, (int)state.Victory);
+            Add(ref hash, state.WinnerId.Value);
 
             HashPlayers(ref hash, state.Players);
             HashCities(ref hash, state.Cities);
@@ -72,6 +74,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.ControllerId.Value);
                 Add(ref hash, item.GroundFood);
                 Add(ref hash, item.IsSharedBoundary ? 1 : 0);
+                Add(ref hash, item.DefenseBonusPercent);
                 var visibleCities = item.VisibleCityIds == null
                     ? new List<EntityId>()
                     : new List<EntityId>(item.VisibleCityIds);

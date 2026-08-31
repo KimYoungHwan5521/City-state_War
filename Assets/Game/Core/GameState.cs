@@ -32,15 +32,25 @@ namespace LittleCiv.Core
         MotorizedSupply = 5
     }
 
+    public enum VictoryType
+    {
+        None = 0,
+        Culture = 1,
+        Science = 2,
+        Conquest = 3
+    }
+
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 3;
+        public const int CurrentSchemaVersion = 5;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
         public int TurnNumber = 1;
         public long NextEntityId = 1;
+        public VictoryType Victory;
+        public EntityId WinnerId;
         public List<PlayerState> Players = new List<PlayerState>();
         public List<CityState> Cities = new List<CityState>();
         public List<TileState> Tiles = new List<TileState>();
@@ -57,6 +67,8 @@ namespace LittleCiv.Core
                 NextEntityId = 1
             };
         }
+
+        public bool IsGameOver => Victory != VictoryType.None;
 
         public EntityId AllocateId()
         {
@@ -100,6 +112,7 @@ namespace LittleCiv.Core
         public EntityId ControllerId;
         public int GroundFood;
         public bool IsSharedBoundary;
+        public int DefenseBonusPercent;
         public List<EntityId> VisibleCityIds = new List<EntityId>();
     }
 

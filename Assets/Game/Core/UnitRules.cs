@@ -25,5 +25,47 @@ namespace LittleCiv.Core
         {
             return type == UnitType.Supply || type == UnitType.MotorizedSupply;
         }
+
+        public static int Attack(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia: return 3;
+                case UnitType.IronInfantry: return 5;
+                case UnitType.GunpowderInfantry: return 7;
+                case UnitType.MechanizedInfantry: return 9;
+                case UnitType.Supply: return 1;
+                case UnitType.MotorizedSupply: return 4;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        public static int MaximumHitPoints(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia: return 16;
+                case UnitType.IronInfantry: return 16;
+                case UnitType.GunpowderInfantry: return 27;
+                case UnitType.MechanizedInfantry: return 38;
+                case UnitType.Supply: return 9;
+                case UnitType.MotorizedSupply: return 16;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        public static int EquipmentTier(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia:
+                case UnitType.Supply: return 0;
+                case UnitType.IronInfantry: return 1;
+                case UnitType.GunpowderInfantry: return 2;
+                case UnitType.MechanizedInfantry:
+                case UnitType.MotorizedSupply: return 3;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
     }
 }

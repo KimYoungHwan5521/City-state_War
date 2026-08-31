@@ -14,6 +14,8 @@ namespace LittleCiv.Core
                 MatchSeed = source.MatchSeed,
                 TurnNumber = source.TurnNumber,
                 NextEntityId = source.NextEntityId,
+                Victory = source.Victory,
+                WinnerId = source.WinnerId,
                 MapTopology = CloneTopology(source.MapTopology)
             };
 
@@ -56,6 +58,7 @@ namespace LittleCiv.Core
                     ControllerId = item.ControllerId,
                     GroundFood = item.GroundFood,
                     IsSharedBoundary = item.IsSharedBoundary,
+                    DefenseBonusPercent = item.DefenseBonusPercent,
                     VisibleCityIds = item.VisibleCityIds == null
                         ? new List<EntityId>()
                         : new List<EntityId>(item.VisibleCityIds)
