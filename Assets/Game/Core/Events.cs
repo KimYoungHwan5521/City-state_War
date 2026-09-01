@@ -43,7 +43,8 @@ namespace LittleCiv.Core
         DefenseFacilityConstructionCompleted = 36,
         ModernDefenseDeactivated = 37,
         ModernDefenseReactivationStarted = 38,
-        ModernDefenseReactivated = 39
+        ModernDefenseReactivated = 39,
+        DistrictPillaged = 40
     }
 
     [Serializable]

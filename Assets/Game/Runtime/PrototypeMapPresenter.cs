@@ -356,6 +356,9 @@ namespace LittleCiv.Runtime
                 if (gameEvent.Type == GameEventType.MovementBlocked)
                     AddCombatLog($"T{resolution.ResolvedTurnNumber} MOVE BLOCKED: unit {gameEvent.SourceId}, " +
                                  $"reason {(MovementStopReason)gameEvent.SecondaryValue}");
+                if (gameEvent.Type == GameEventType.DistrictPillaged)
+                    AddCombatLog($"T{resolution.ResolvedTurnNumber} PILLAGE: district {gameEvent.TargetId} | " +
+                                 $"reward {gameEvent.PrimaryValue}, food {gameEvent.SecondaryValue}");
             }
             turnLog.Insert(0, $"Turn {resolution.ResolvedTurnNumber}: {resolution.Commands.Count} orders, " +
                               $"{resolution.ManeuverRequests.Count} clashes.");
@@ -476,6 +479,12 @@ namespace LittleCiv.Runtime
                     AddCombatLog(combat.AttackerAdvanced
                         ? "  attacker advanced into the target tile"
                         : "  attacker did not take the target tile");
+                    if (combat.Occupation != null && combat.Occupation.PillageRewardGranted)
+                    {
+                        AddCombatLog($"  PILLAGE {combat.Occupation.DistrictType}: " +
+                                     $"reward {combat.Occupation.PillagePrimaryReward}, " +
+                                     $"food {combat.Occupation.PillageFoodReward}");
+                    }
                 }
             }
             for (var unitIndex = 0; unitIndex < state.Units.Count; unitIndex++)

@@ -11,6 +11,9 @@ namespace LittleCiv.Core
         public DistrictType DistrictType;
         public bool DistrictOccupied;
         public bool ConquestVictoryTriggered;
+        public bool PillageRewardGranted;
+        public int PillagePrimaryReward;
+        public int PillageFoodReward;
     }
 
     public static class OccupationResolver
@@ -52,6 +55,8 @@ namespace LittleCiv.Core
             if (HasEnemyUnit(state, tileId, occupyingPlayerId)) return result;
 
             var city = FindCity(state, district.CityId);
+            var grantsPillageReward = city != null && occupyingPlayerId != city.OwnerId &&
+                                      district.Type != DistrictType.Government && !district.IsPillaged;
             district.ControllerId = occupyingPlayerId;
             district.IsOperational = false;
             if (city != null && occupyingPlayerId != city.OwnerId)
@@ -70,6 +75,10 @@ namespace LittleCiv.Core
             result.DistrictId = district.Id;
             result.DistrictType = district.Type;
             result.DistrictOccupied = true;
+            if (grantsPillageReward)
+            {
+                ApplyPillageReward(state, district, city, occupyingPlayerId, result);
+            }
             if (district.Type == DistrictType.Government && !state.IsGameOver)
             {
                 state.Victory = VictoryType.Conquest;
@@ -77,6 +86,81 @@ namespace LittleCiv.Core
                 result.ConquestVictoryTriggered = true;
             }
             return result;
+        }
+
+        private static void ApplyPillageReward(
+            GameState state,
+            DistrictState district,
+            CityState victimCity,
+            EntityId occupyingPlayerId,
+            OccupationResult result)
+        {
+            var receivingCity = FindReceivingCity(state, occupyingPlayerId, district.TileId);
+            if (receivingCity == null) return;
+            result.PillageRewardGranted = true;
+            switch (district.Type)
+            {
+                case DistrictType.Agriculture:
+                    result.PillageFoodReward = Math.Min(6, Math.Max(0, victimCity.StoredFood));
+                    victimCity.StoredFood -= result.PillageFoodReward;
+                    receivingCity.StoredFood += result.PillageFoodReward;
+                    break;
+                case DistrictType.Commerce:
+                    result.PillagePrimaryReward = 6;
+                    receivingCity.Gold += 6;
+                    break;
+                case DistrictType.Science:
+                    result.PillagePrimaryReward = 4;
+                    receivingCity.ResearchPoints += 4;
+                    break;
+                case DistrictType.Culture:
+                    result.PillagePrimaryReward = 4;
+                    AddCultureInfluence(victimCity, occupyingPlayerId, 4);
+                    break;
+                case DistrictType.Military:
+                    result.PillagePrimaryReward = 3;
+                    receivingCity.Gold += 3;
+                    result.PillageFoodReward = Math.Min(3, Math.Max(0, victimCity.StoredFood));
+                    victimCity.StoredFood -= result.PillageFoodReward;
+                    if (result.PillageFoodReward > 0)
+                        GroundFoodResolver.DepositAfterCombat(state, district.TileId, result.PillageFoodReward);
+                    break;
+                case DistrictType.NuclearFacility:
+                    result.PillagePrimaryReward = 10;
+                    receivingCity.Gold += 10;
+                    break;
+            }
+        }
+
+        private static CityState FindReceivingCity(GameState state, EntityId playerId, EntityId occupiedTileId)
+        {
+            for (var i = 0; i < state.Units.Count; i++)
+            {
+                var unit = state.Units[i];
+                if (unit.TileId != occupiedTileId || unit.OwnerId != playerId || !unit.HomeCityId.IsValid) continue;
+                var home = FindCity(state, unit.HomeCityId);
+                if (home != null && home.OwnerId == playerId) return home;
+            }
+            CityState first = null;
+            for (var i = 0; i < state.Cities.Count; i++)
+            {
+                var candidate = state.Cities[i];
+                if (candidate.OwnerId != playerId) continue;
+                if (first == null || candidate.Id.CompareTo(first.Id) < 0) first = candidate;
+            }
+            return first;
+        }
+
+        private static void AddCultureInfluence(CityState city, EntityId cultureOwnerId, int amount)
+        {
+            if (city.CultureInfluences == null) city.CultureInfluences = new List<CultureInfluenceState>();
+            var influence = city.CultureInfluences.Find(item => item.CultureOwnerId == cultureOwnerId);
+            if (influence == null)
+            {
+                influence = new CultureInfluenceState { CultureOwnerId = cultureOwnerId };
+                city.CultureInfluences.Add(influence);
+            }
+            influence.ConversionProgress += amount;
         }
 
         private static DistrictState FindDistrict(GameState state, EntityId tileId)

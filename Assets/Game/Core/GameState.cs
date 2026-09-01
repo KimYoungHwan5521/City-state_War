@@ -60,7 +60,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 15;
+        public const int CurrentSchemaVersion = 16;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -131,6 +131,14 @@ namespace LittleCiv.Core
         public int LastGoldProduction;
         public int LastScienceProduction;
         public int LastCultureProduction;
+        public List<CultureInfluenceState> CultureInfluences = new List<CultureInfluenceState>();
+    }
+
+    [Serializable]
+    public sealed class CultureInfluenceState
+    {
+        public EntityId CultureOwnerId;
+        public int ConversionProgress;
     }
 
     [Serializable]

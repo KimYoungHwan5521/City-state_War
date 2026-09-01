@@ -600,6 +600,16 @@ namespace LittleCiv.Core
                             command.PlayerId,
                             occupation.DistrictId,
                             (int)occupation.DistrictType));
+                        if (occupation.PillageRewardGranted)
+                        {
+                            resolution.Events.Add(CreateEvent(
+                                state.TurnNumber,
+                                GameEventType.DistrictPillaged,
+                                command.PlayerId,
+                                occupation.DistrictId,
+                                occupation.PillagePrimaryReward,
+                                occupation.PillageFoodReward));
+                        }
                     }
                 }
 

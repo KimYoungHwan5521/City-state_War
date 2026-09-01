@@ -56,7 +56,8 @@ namespace LittleCiv.Core
                     LastUnitFoodConsumption = item.LastUnitFoodConsumption,
                     LastGoldProduction = item.LastGoldProduction,
                     LastScienceProduction = item.LastScienceProduction,
-                    LastCultureProduction = item.LastCultureProduction
+                    LastCultureProduction = item.LastCultureProduction,
+                    CultureInfluences = CloneCultureInfluences(item.CultureInfluences)
                 });
             }
 
@@ -154,6 +155,21 @@ namespace LittleCiv.Core
                 });
             }
 
+            return result;
+        }
+
+        private static List<CultureInfluenceState> CloneCultureInfluences(List<CultureInfluenceState> source)
+        {
+            var result = new List<CultureInfluenceState>();
+            if (source == null) return result;
+            for (var i = 0; i < source.Count; i++)
+            {
+                result.Add(new CultureInfluenceState
+                {
+                    CultureOwnerId = source[i].CultureOwnerId,
+                    ConversionProgress = source[i].ConversionProgress
+                });
+            }
             return result;
         }
 

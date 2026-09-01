@@ -176,6 +176,97 @@ namespace LittleCiv.Tests
                 new TurnProcessor().Resolve(fixture.State, new List<GameCommand>()));
         }
 
+        [TestCase(DistrictType.Commerce, 6)]
+        [TestCase(DistrictType.Science, 4)]
+        [TestCase(DistrictType.NuclearFacility, 10)]
+        public void FirstOccupationGrantsRecordedPrimaryReward(DistrictType type, int amount)
+        {
+            var fixture = CreateFixture(type, includeDefender: false);
+            var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            var before = type == DistrictType.Science ? attackerCity.ResearchPoints : attackerCity.Gold;
+
+            var result = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+
+            var after = type == DistrictType.Science ? attackerCity.ResearchPoints : attackerCity.Gold;
+            Assert.That(result.PillageRewardGranted, Is.True);
+            Assert.That(result.PillagePrimaryReward, Is.EqualTo(amount));
+            Assert.That(after - before, Is.EqualTo(amount));
+        }
+
+        [Test]
+        public void AgricultureStealsAtMostSixStoredFood()
+        {
+            var fixture = CreateFixture(DistrictType.Agriculture, includeDefender: false);
+            var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
+            var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            victimCity.StoredFood = 4;
+
+            var result = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+
+            Assert.That(result.PillageFoodReward, Is.EqualTo(4));
+            Assert.That(victimCity.StoredFood, Is.Zero);
+            Assert.That(attackerCity.StoredFood, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void MilitaryGrantsGoldAndDropsStolenFoodOnOccupiedTile()
+        {
+            var fixture = CreateFixture(DistrictType.Military, includeDefender: false);
+            var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
+            var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            victimCity.StoredFood = 8;
+            fixture.Attacker.TileId = fixture.TargetTile;
+
+            var result = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            var tile = fixture.State.Tiles.Single(item => item.Id == fixture.TargetTile);
+
+            Assert.That(attackerCity.Gold, Is.EqualTo(3));
+            Assert.That(victimCity.StoredFood, Is.EqualTo(5));
+            Assert.That(result.PillageFoodReward, Is.EqualTo(3));
+            Assert.That(tile.GroundFood, Is.EqualTo(3));
+            Assert.That(tile.GroundFoodOwnerId, Is.EqualTo(fixture.AttackerPlayer));
+        }
+
+        [Test]
+        public void CulturePillageAddsFourConversionProgressInVictimCity()
+        {
+            var fixture = CreateFixture(DistrictType.Culture, includeDefender: false);
+            var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
+
+            OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+
+            Assert.That(victimCity.CultureInfluences.Single(item =>
+                item.CultureOwnerId == fixture.AttackerPlayer).ConversionProgress, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void RewardCannotRepeatUntilRepairCompletes()
+        {
+            var fixture = CreateFixture(DistrictType.Commerce, includeDefender: false);
+            var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
+
+            var repeated = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            Assert.That(repeated.PillageRewardGranted, Is.False);
+            Assert.That(attackerCity.Gold, Is.EqualTo(6));
+
+            OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
+            var repair = new GameCommand
+            {
+                CommandId = fixture.State.AllocateId(), PlayerId = fixture.DefenderPlayer,
+                TurnNumber = fixture.State.TurnNumber, Type = GameCommandType.RepairDistrict,
+                SubjectId = fixture.District.Id
+            };
+            Assert.That(DistrictConstructionResolver.TryStartRepair(fixture.State, repair, out _), Is.True);
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+
+            var afterRepair = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            Assert.That(afterRepair.PillageRewardGranted, Is.True);
+            Assert.That(attackerCity.Gold, Is.EqualTo(12));
+        }
+
         private static Fixture CreateFixture(DistrictType type, bool includeDefender)
         {
             var state = GameState.CreateNew(555);
@@ -184,10 +275,15 @@ namespace LittleCiv.Tests
             state.Players.Add(new PlayerState { Id = attackerPlayer, Slot = PlayerSlot.PlayerOne });
             state.Players.Add(new PlayerState { Id = defenderPlayer, Slot = PlayerSlot.PlayerTwo });
             var defenderCity = state.AllocateId();
+            var attackerCity = state.AllocateId();
+            state.Cities.Add(new CityState { Id = attackerCity, OwnerId = attackerPlayer });
             state.Cities.Add(new CityState { Id = defenderCity, OwnerId = defenderPlayer });
             var sourceTile = state.AllocateId();
             var targetTile = state.AllocateId();
-            state.Tiles.Add(new TileState { Id = sourceTile, ControllerId = attackerPlayer });
+            state.Tiles.Add(new TileState
+            {
+                Id = sourceTile, CityId = attackerCity, ControllerId = attackerPlayer
+            });
             state.Tiles.Add(new TileState
             {
                 Id = targetTile, CityId = defenderCity, ControllerId = defenderPlayer
@@ -215,7 +311,7 @@ namespace LittleCiv.Tests
             var attacker = new UnitState
             {
                 Id = state.AllocateId(), OwnerId = attackerPlayer, TileId = sourceTile,
-                Type = UnitType.Militia, HitPoints = 16, RemainingMovement = 2
+                HomeCityId = attackerCity, Type = UnitType.Militia, HitPoints = 16, RemainingMovement = 2
             };
             state.Units.Add(attacker);
             if (includeDefender)
