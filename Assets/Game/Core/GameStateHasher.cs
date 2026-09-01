@@ -29,6 +29,7 @@ namespace LittleCiv.Core
             HashUnits(ref hash, state.Units);
             HashDistricts(ref hash, state.Districts);
             HashUnitTrainings(ref hash, state.UnitTrainings);
+            HashDefenseFacilities(ref hash, state.DefenseFacilities);
             HashMapTopology(ref hash, state.MapTopology);
             return hash;
         }
@@ -165,6 +166,23 @@ namespace LittleCiv.Core
                 Add(ref hash, (int)item.Type);
                 Add(ref hash, item.RemainingTurns);
                 Add(ref hash, item.IsAwaitingDeployment ? 1 : 0);
+            }
+        }
+
+        private static void HashDefenseFacilities(ref ulong hash, List<DefenseFacilityState> source)
+        {
+            var items = SortedCopy(source, item => item.Id.Value);
+            Add(ref hash, items.Count);
+            foreach (var item in items)
+            {
+                Add(ref hash, item.Id.Value);
+                Add(ref hash, item.CityId.Value);
+                Add(ref hash, item.TileId.Value);
+                Add(ref hash, (int)item.Type);
+                Add(ref hash, (int)item.BuildingType);
+                Add(ref hash, item.RemainingConstructionTurns);
+                Add(ref hash, item.IsModernDefenseActive ? 1 : 0);
+                Add(ref hash, item.RemainingReactivationTurns);
             }
         }
 

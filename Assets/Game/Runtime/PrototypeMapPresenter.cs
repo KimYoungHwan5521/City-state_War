@@ -31,6 +31,10 @@ namespace LittleCiv.Runtime
             new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<GameEntityId, GameCommand> plannedRepairs =
             new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedDefenseConstructions =
+            new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedDefenseActions =
+            new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<string, GameCommand> plannedFoodTransfers =
             new Dictionary<string, GameCommand>();
         private readonly Dictionary<GameEntityId, Vector3> visibleTilePositions =
@@ -61,6 +65,9 @@ namespace LittleCiv.Runtime
         private Material routeMaterial;
         private Material tileOutlineMaterial;
         private Material groundFoodMaterial;
+        private Material wallDefenseMaterial;
+        private Material moatDefenseMaterial;
+        private Material modernDefenseMaterial;
         private Texture2D routeTurnMarker;
 
         private void Start()
@@ -358,6 +365,8 @@ namespace LittleCiv.Runtime
             plannedTrainings.Clear();
             plannedFoodAdjustments.Clear();
             plannedRepairs.Clear();
+            plannedDefenseConstructions.Clear();
+            plannedDefenseActions.Clear();
             plannedFoodTransfers.Clear();
             selectedUnitId = default;
             selectedTileId = default;
@@ -623,6 +632,69 @@ namespace LittleCiv.Runtime
             statusMessage = $"{district.Type} repair cancelled.";
         }
 
+        private void ReserveDefenseConstruction(DistrictState district, DefenseFacilityType type)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Defense construction is unavailable during maneuver re-command.";
+                return;
+            }
+            if (plannedDefenseConstructions.ContainsKey(district.TileId)) return;
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.StartDefenseFacility,
+                SubjectId = district.CityId, TargetId = district.TileId, PrimaryValue = (int)type
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted)
+                plannedDefenseConstructions[district.TileId] = command;
+            statusMessage = result == CommandMutationResult.Accepted
+                ? $"{type} construction reserved ({DefenseFacilityResolver.GoldCost(type)} gold)."
+                : $"Defense construction rejected: {result}";
+            if (result == CommandMutationResult.Accepted) ShowCities(new[] { district.CityId });
+        }
+
+        private void CancelDefenseConstruction(GameEntityId tileId)
+        {
+            if (!plannedDefenseConstructions.TryGetValue(tileId, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedDefenseConstructions.Remove(tileId);
+            statusMessage = "Defense construction cancelled.";
+            ShowCities(new[] { command.SubjectId });
+        }
+
+        private void ReserveModernDefenseAction(DefenseFacilityState facility, bool activate)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Defense controls are unavailable during maneuver re-command.";
+                return;
+            }
+            if (plannedDefenseActions.TryGetValue(facility.Id, out var previous))
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.SetModernDefenseActive,
+                SubjectId = facility.Id, PrimaryValue = activate ? 1 : 0
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted) plannedDefenseActions[facility.Id] = command;
+            else plannedDefenseActions.Remove(facility.Id);
+            statusMessage = result == CommandMutationResult.Accepted
+                ? activate ? "Modern defense reactivation reserved (2 paid turns)." : "Modern defense deactivation reserved."
+                : $"Defense control rejected: {result}";
+        }
+
+        private void CancelModernDefenseAction(DefenseFacilityState facility)
+        {
+            if (!plannedDefenseActions.TryGetValue(facility.Id, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedDefenseActions.Remove(facility.Id);
+            statusMessage = "Modern defense control change cancelled.";
+        }
+
         private void AdjustSelectedUnitFood(UnitState unit, int change)
         {
             if (IsManeuverRecommandPhase())
@@ -803,6 +875,7 @@ namespace LittleCiv.Runtime
                 CreateTileOutline(tileObject.transform);
                 CreateResourceMarker(tileObject.transform, tile);
                 CreateGroundFoodMarker(tileObject.transform, tile);
+                CreateDefenseFacilityMarker(tileObject.transform, tile);
                 CreateUnitsOnTile(tileObject.transform, placement.TileId);
             }
             CreateCityBorder(root.transform, view);
@@ -899,6 +972,42 @@ namespace LittleCiv.Runtime
             mesh.RecalculateBounds();
             filter.sharedMesh = mesh;
             marker.AddComponent<MeshRenderer>().sharedMaterial = material;
+        }
+
+        private void CreateDefenseFacilityMarker(Transform tileTransform, TileState tile)
+        {
+            var facility = state.DefenseFacilities.Find(item => item.TileId == tile.Id);
+            plannedDefenseConstructions.TryGetValue(tile.Id, out var planned);
+            if (facility == null && planned == null) return;
+            var shownType = facility != null && facility.RemainingConstructionTurns > 0
+                ? facility.BuildingType
+                : facility != null ? facility.Type : (DefenseFacilityType)planned.PrimaryValue;
+            var underConstruction = planned != null || (facility != null && facility.RemainingConstructionTurns > 0);
+            var marker = new GameObject($"Defense {shownType}");
+            marker.transform.SetParent(tileTransform, false);
+            marker.transform.localPosition = Vector3.up * 0.24f;
+            var line = marker.AddComponent<LineRenderer>();
+            line.sharedMaterial = underConstruction
+                ? constructionMaterial
+                : shownType == DefenseFacilityType.Wall
+                    ? wallDefenseMaterial
+                    : shownType == DefenseFacilityType.Moat ||
+                      (shownType == DefenseFacilityType.ModernDefense && !facility.IsModernDefenseActive)
+                        ? moatDefenseMaterial
+                        : modernDefenseMaterial;
+            line.useWorldSpace = false;
+            line.loop = true;
+            line.positionCount = 6;
+            line.startWidth = shownType == DefenseFacilityType.ModernDefense ? 0.12f : 0.08f;
+            line.endWidth = line.startWidth;
+            var radius = shownType == DefenseFacilityType.Wall ? 0.58f :
+                         shownType == DefenseFacilityType.Moat ? 0.70f : 0.82f;
+            for (var index = 0; index < 6; index++)
+            {
+                var angle = Mathf.Deg2Rad * ((60f * index) + 30f);
+                line.SetPosition(index, new Vector3(Mathf.Cos(angle) * radius, 0f,
+                    Mathf.Sin(angle) * radius));
+            }
         }
 
         private Material ResourceMaterial(TileResourceType type)
@@ -1046,6 +1155,9 @@ namespace LittleCiv.Runtime
             routeMaterial = CreateMaterial(Color.black);
             tileOutlineMaterial = CreateMaterial(new Color(1f, 1f, 1f, 0.9f));
             groundFoodMaterial = CreateMaterial(new Color(1f, 0.82f, 0.05f));
+            wallDefenseMaterial = CreateMaterial(new Color(0.75f, 0.75f, 0.75f));
+            moatDefenseMaterial = CreateMaterial(new Color(0.15f, 0.70f, 0.95f));
+            modernDefenseMaterial = CreateMaterial(new Color(1f, 0.20f, 0.20f));
             routeTurnMarker = CreateCircleTexture(48);
         }
 
@@ -1238,7 +1350,9 @@ namespace LittleCiv.Runtime
             if (district != null)
             {
                 DrawDistrictActions(x, yOffset, district);
-                DrawUnitsOnSelectedTile(x, yOffset + 210f);
+                var defenseOffset = district.Type == DistrictType.Military ? 232f : 190f;
+                DrawDefenseFacilityActions(x, yOffset + defenseOffset, district);
+                DrawUnitsOnSelectedTile(x, yOffset + defenseOffset + 136f);
                 return;
             }
 
@@ -1355,11 +1469,99 @@ namespace LittleCiv.Runtime
                 return;
             }
             GUI.Label(new Rect(x + 14f, y + 112f, 380f, 22f), "Military district action: train a unit");
-            GUI.enabled = !state.IsGameOver && ownedAndControlled && district.IsOperational;
-            if (GUI.Button(new Rect(x + 14f, y + 144f, 180f, 30f), "Train Militia (3 gold)"))
-                ReserveTraining(district, UnitType.Militia);
-            if (GUI.Button(new Rect(x + 210f, y + 144f, 180f, 30f), "Train Supply (2 gold)"))
-                ReserveTraining(district, UnitType.Supply);
+            var player = city == null ? null : FindPlayer(city.OwnerId);
+            var unlocked = player == null || player.UnlockedUnitTypes == null
+                ? new List<UnitType>()
+                : player.UnlockedUnitTypes.OrderBy(item => (int)item).ToList();
+            for (var index = 0; index < unlocked.Count && index < 6; index++)
+            {
+                var type = unlocked[index];
+                var column = index % 2;
+                var row = index / 2;
+                GUI.enabled = !state.IsGameOver && ownedAndControlled && district.IsOperational &&
+                              city.Gold >= UnitRules.TrainingGold(type);
+                if (GUI.Button(new Rect(x + 14f + (column * 196f), y + 140f + (row * 28f), 180f, 26f),
+                    $"{type} | {UnitRules.TrainingGold(type)}g/{UnitRules.TrainingTurns(type)}t"))
+                    ReserveTraining(district, type);
+            }
+            GUI.enabled = true;
+        }
+
+        private void DrawDefenseFacilityActions(float x, float y, DistrictState district)
+        {
+            var city = state.Cities.Find(item => item.Id == district.CityId);
+            var tile = state.Tiles.Find(item => item.Id == district.TileId);
+            var facility = state.DefenseFacilities.Find(item => item.TileId == district.TileId);
+            GUI.Label(new Rect(x + 14f, y, 376f, 22f), "Tile defense facility:");
+            if (district.RemainingConstructionTurns > 0)
+            {
+                GUI.Label(new Rect(x + 14f, y + 24f, 376f, 22f),
+                    "Available after district construction completes.");
+                return;
+            }
+            if (facility != null && facility.RemainingConstructionTurns > 0)
+            {
+                GUI.Label(new Rect(x + 14f, y + 24f, 376f, 42f),
+                    $"Building {facility.BuildingType}: {facility.RemainingConstructionTurns} turns | " +
+                    $"current bonus {DefenseFacilityResolver.EffectiveBonus(facility)}%");
+                return;
+            }
+            if (plannedDefenseConstructions.TryGetValue(district.TileId, out var planned))
+            {
+                var plannedType = (DefenseFacilityType)planned.PrimaryValue;
+                GUI.Label(new Rect(x + 14f, y + 24f, 190f, 30f),
+                    $"{plannedType} reserved");
+                if (GUI.Button(new Rect(x + 210f, y + 24f, 180f, 30f), "Cancel defense build"))
+                    CancelDefenseConstruction(district.TileId);
+                return;
+            }
+
+            var type = facility == null ? DefenseFacilityType.None : facility.Type;
+            var bonus = facility == null ? 0 : DefenseFacilityResolver.EffectiveBonus(facility);
+            var status = type == DefenseFacilityType.ModernDefense
+                ? facility.IsModernDefenseActive
+                    ? "active"
+                    : facility.RemainingReactivationTurns > 0
+                        ? $"reactivating ({facility.RemainingReactivationTurns} turns)"
+                        : "inactive"
+                : "active";
+            GUI.Label(new Rect(x + 14f, y + 24f, 376f, 22f),
+                $"{type} | defense +{bonus}%" + (type == DefenseFacilityType.None ? string.Empty : $" | {status}"));
+
+            var ownedAndControlled = city != null && tile != null && city.OwnerId == activePlayerId &&
+                                     tile.ControllerId == city.OwnerId && !state.IsGameOver;
+            if (type != DefenseFacilityType.ModernDefense)
+            {
+                var next = (DefenseFacilityType)((int)type + 1);
+                GUI.enabled = ownedAndControlled && city.Gold >= DefenseFacilityResolver.GoldCost(next);
+                if (GUI.Button(new Rect(x + 14f, y + 52f, 376f, 30f),
+                    $"Build {next} — {DefenseFacilityResolver.GoldCost(next)} gold / " +
+                    $"{DefenseFacilityResolver.ConstructionTurns(next)} turns"))
+                    ReserveDefenseConstruction(district, next);
+                GUI.enabled = true;
+                return;
+            }
+
+            if (plannedDefenseActions.ContainsKey(facility.Id))
+            {
+                GUI.Label(new Rect(x + 14f, y + 52f, 190f, 30f), "Control change reserved");
+                if (GUI.Button(new Rect(x + 210f, y + 52f, 180f, 30f), "Cancel change"))
+                    CancelModernDefenseAction(facility);
+                return;
+            }
+            GUI.enabled = ownedAndControlled;
+            if (facility.IsModernDefenseActive)
+            {
+                if (GUI.Button(new Rect(x + 14f, y + 52f, 376f, 30f),
+                    "Deactivate (falls back to Moat +50%)"))
+                    ReserveModernDefenseAction(facility, false);
+            }
+            else if (facility.RemainingReactivationTurns <= 0)
+            {
+                if (GUI.Button(new Rect(x + 14f, y + 52f, 376f, 30f),
+                    "Reactivate — 2 turns / 2 gold each turn"))
+                    ReserveModernDefenseAction(facility, true);
+            }
             GUI.enabled = true;
         }
 

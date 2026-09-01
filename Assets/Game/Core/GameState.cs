@@ -32,6 +32,14 @@ namespace LittleCiv.Core
         MotorizedSupply = 5
     }
 
+    public enum DefenseFacilityType
+    {
+        None = 0,
+        Wall = 1,
+        Moat = 2,
+        ModernDefense = 3
+    }
+
     public enum TileResourceType
     {
         None = 0,
@@ -52,7 +60,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 14;
+        public const int CurrentSchemaVersion = 15;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -66,6 +74,7 @@ namespace LittleCiv.Core
         public List<UnitState> Units = new List<UnitState>();
         public List<DistrictState> Districts = new List<DistrictState>();
         public List<UnitTrainingState> UnitTrainings = new List<UnitTrainingState>();
+        public List<DefenseFacilityState> DefenseFacilities = new List<DefenseFacilityState>();
         public WorldMapTopology MapTopology = new WorldMapTopology();
 
         public static GameState CreateNew(long matchSeed)
@@ -186,5 +195,18 @@ namespace LittleCiv.Core
         public UnitType Type;
         public int RemainingTurns;
         public bool IsAwaitingDeployment;
+    }
+
+    [Serializable]
+    public sealed class DefenseFacilityState
+    {
+        public EntityId Id;
+        public EntityId CityId;
+        public EntityId TileId;
+        public DefenseFacilityType Type;
+        public DefenseFacilityType BuildingType;
+        public int RemainingConstructionTurns;
+        public bool IsModernDefenseActive;
+        public int RemainingReactivationTurns;
     }
 }

@@ -38,7 +38,12 @@ namespace LittleCiv.Core
         UnitStarvedToDeath = 31,
         UnitPromoted = 32,
         DistrictRepairStarted = 33,
-        DistrictRepairCompleted = 34
+        DistrictRepairCompleted = 34,
+        DefenseFacilityConstructionStarted = 35,
+        DefenseFacilityConstructionCompleted = 36,
+        ModernDefenseDeactivated = 37,
+        ModernDefenseReactivationStarted = 38,
+        ModernDefenseReactivated = 39
     }
 
     [Serializable]

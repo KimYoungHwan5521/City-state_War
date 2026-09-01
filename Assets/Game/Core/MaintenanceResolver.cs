@@ -8,6 +8,8 @@ namespace LittleCiv.Core
         public readonly List<EntityId> DisbandedUnits = new List<EntityId>();
         public readonly List<DisbandedUnitRecord> DisbandedUnitRecords = new List<DisbandedUnitRecord>();
         public readonly List<EntityId> SuspendedDistricts = new List<EntityId>();
+        public readonly List<EntityId> DeactivatedModernDefenses = new List<EntityId>();
+        public readonly List<EntityId> ReactivatedModernDefenses = new List<EntityId>();
     }
 
     public sealed class DisbandedUnitRecord
@@ -94,6 +96,8 @@ namespace LittleCiv.Core
                 facilities[i].IsOperational = true;
             }
             city.Gold -= facilityCost;
+            DefenseFacilityResolver.ResolveModernMaintenance(
+                state, city, result.DeactivatedModernDefenses, result.ReactivatedModernDefenses);
         }
 
         private static bool UnitBelongsToCity(GameState state, UnitState unit, CityState city)

@@ -138,6 +138,22 @@ namespace LittleCiv.Core
                 });
             }
 
+            for (var i = 0; i < source.DefenseFacilities.Count; i++)
+            {
+                var item = source.DefenseFacilities[i];
+                result.DefenseFacilities.Add(new DefenseFacilityState
+                {
+                    Id = item.Id,
+                    CityId = item.CityId,
+                    TileId = item.TileId,
+                    Type = item.Type,
+                    BuildingType = item.BuildingType,
+                    RemainingConstructionTurns = item.RemainingConstructionTurns,
+                    IsModernDefenseActive = item.IsModernDefenseActive,
+                    RemainingReactivationTurns = item.RemainingReactivationTurns
+                });
+            }
+
             return result;
         }
 

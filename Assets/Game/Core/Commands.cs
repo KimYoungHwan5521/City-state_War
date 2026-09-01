@@ -18,7 +18,9 @@ namespace LittleCiv.Core
         ConfirmTurn = 10,
         TransferFood = 11,
         PromoteUnit = 12,
-        RepairDistrict = 13
+        RepairDistrict = 13,
+        StartDefenseFacility = 14,
+        SetModernDefenseActive = 15
     }
 
     [Serializable]

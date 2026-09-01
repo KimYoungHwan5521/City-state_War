@@ -89,9 +89,26 @@ namespace LittleCiv.Core
                             GameEventType.DistrictMaintenanceSuspended,
                             maintenance.SuspendedDistricts[districtIndex]));
                     }
+                    for (var defenseIndex = 0; defenseIndex < maintenance.DeactivatedModernDefenses.Count; defenseIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.ModernDefenseDeactivated,
+                            maintenance.DeactivatedModernDefenses[defenseIndex]));
+                    }
+                    for (var defenseIndex = 0; defenseIndex < maintenance.ReactivatedModernDefenses.Count; defenseIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.ModernDefenseReactivated,
+                            maintenance.ReactivatedModernDefenses[defenseIndex]));
+                    }
                 }
                 if (phase == TurnPhase.ConstructionTrainingProjects)
                 {
+                    var completedDefenses = DefenseFacilityResolver.AdvanceConstruction(state);
+                    for (var defenseIndex = 0; defenseIndex < completedDefenses.Count; defenseIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.DefenseFacilityConstructionCompleted,
+                            completedDefenses[defenseIndex]));
+                    }
                     var completedDistricts = DistrictConstructionResolver.Advance(state);
                     for (var completedIndex = 0; completedIndex < completedDistricts.Count; completedIndex++)
                     {
@@ -307,6 +324,7 @@ namespace LittleCiv.Core
                 var transferredFood = 0;
                 UnitPromotionResult promotion = null;
                 DistrictState startedRepair = null;
+                DefenseFacilityState startedDefense = null;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
@@ -352,6 +370,18 @@ namespace LittleCiv.Core
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
                 }
+                if (accepted && command.Type == GameCommandType.StartDefenseFacility &&
+                    !DefenseFacilityResolver.TryStart(state, command, out startedDefense))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.SetModernDefenseActive &&
+                    !DefenseFacilityResolver.TrySetModernActive(state, command))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
                 resolution.Events.Add(CreateEvent(
                     state.TurnNumber,
                     accepted ? GameEventType.CommandAccepted : GameEventType.CommandRejected,
@@ -371,6 +401,20 @@ namespace LittleCiv.Core
                             startedDistrict.Id,
                             (int)startedDistrict.Type,
                             startedDistrict.RemainingConstructionTurns));
+                    }
+                    if (startedDefense != null)
+                    {
+                        resolution.Events.Add(CreateEvent(state.TurnNumber,
+                            GameEventType.DefenseFacilityConstructionStarted,
+                            startedDefense.Id, startedDefense.TileId,
+                            (int)startedDefense.BuildingType,
+                            startedDefense.RemainingConstructionTurns));
+                    }
+                    if (command.Type == GameCommandType.SetModernDefenseActive)
+                    {
+                        resolution.Events.Add(CreateEvent(state.TurnNumber,
+                            command.PrimaryValue == 0 ? GameEventType.ModernDefenseDeactivated : GameEventType.ModernDefenseReactivationStarted,
+                            command.SubjectId));
                     }
                     if (startedTraining != null)
                     {
