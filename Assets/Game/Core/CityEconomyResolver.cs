@@ -24,20 +24,38 @@ namespace LittleCiv.Core
             for (var cityIndex = 0; cityIndex < state.Cities.Count; cityIndex++)
             {
                 var city = state.Cities[cityIndex];
-                ResetProduction(city);
-                if (!HasOperationalGovernment(state, city)) continue;
-
-                city.LastFoodProduction = GovernmentFood;
-                city.LastGoldProduction = GovernmentGold;
-                city.LastScienceProduction = GovernmentScience;
-                city.LastCultureProduction = GovernmentCulture;
-                AddDistrictProduction(state, city);
+                var breakdown = CalculateBreakdown(state, city);
+                city.LastFoodProduction = breakdown.Food.Total;
+                city.LastGoldProduction = breakdown.Gold.Total;
+                city.LastScienceProduction = breakdown.Science.Total;
+                city.LastCultureProduction = breakdown.Culture.Total;
                 city.Gold += city.LastGoldProduction;
                 city.ResearchPoints += city.LastScienceProduction;
             }
         }
 
-        private static void AddDistrictProduction(GameState state, CityState city)
+        public static CityEconomyBreakdown CalculateBreakdown(GameState state, CityState city)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (city == null) throw new ArgumentNullException(nameof(city));
+            var result = new CityEconomyBreakdown
+            {
+                PopulationConsumption = city.Population,
+                GrowthRequired = city.Population * 3,
+                FamineRequired = city.Population
+            };
+            AddMaintenance(state, city, result);
+            if (!HasOperationalGovernment(state, city)) return result;
+
+            result.Food.Government = GovernmentFood;
+            result.Gold.Government = GovernmentGold;
+            result.Science.Government = GovernmentScience;
+            result.Culture.Government = GovernmentCulture;
+            AddDistrictProduction(state, city, result);
+            return result;
+        }
+
+        private static void AddDistrictProduction(GameState state, CityState city, CityEconomyBreakdown result)
         {
             for (var index = 0; index < state.Districts.Count; index++)
             {
@@ -54,25 +72,42 @@ namespace LittleCiv.Core
                 switch (district.Type)
                 {
                     case DistrictType.Agriculture:
-                        city.LastFoodProduction += AgricultureFood +
-                            (resource == TileResourceType.Food ? AgricultureResourceBonus : 0);
+                        result.Food.DistrictBase += AgricultureFood;
+                        if (resource == TileResourceType.Food) result.Food.ResourceBonus += AgricultureResourceBonus;
                         break;
                     case DistrictType.Commerce:
-                        city.LastGoldProduction += CommerceGold +
-                            (resource == TileResourceType.Commerce ? CommerceResourceBonus : 0) +
-                            adjacencyBonus;
+                        result.Gold.DistrictBase += CommerceGold;
+                        if (resource == TileResourceType.Commerce) result.Gold.ResourceBonus += CommerceResourceBonus;
+                        result.Gold.AdjacencyBonus += adjacencyBonus;
                         break;
                     case DistrictType.Science:
-                        city.LastScienceProduction += ScienceResearch +
-                            (resource == TileResourceType.Science ? ScienceResourceBonus : 0) +
-                            adjacencyBonus;
+                        result.Science.DistrictBase += ScienceResearch;
+                        if (resource == TileResourceType.Science) result.Science.ResourceBonus += ScienceResourceBonus;
+                        result.Science.AdjacencyBonus += adjacencyBonus;
                         break;
                     case DistrictType.Culture:
-                        city.LastCultureProduction += CultureOutput +
-                            (resource == TileResourceType.Culture ? CultureResourceBonus : 0) +
-                            adjacencyBonus;
+                        result.Culture.DistrictBase += CultureOutput;
+                        if (resource == TileResourceType.Culture) result.Culture.ResourceBonus += CultureResourceBonus;
+                        result.Culture.AdjacencyBonus += adjacencyBonus;
                         break;
                 }
+            }
+        }
+
+        private static void AddMaintenance(GameState state, CityState city, CityEconomyBreakdown result)
+        {
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                if (state.Units[index].OwnerId == city.OwnerId)
+                    result.UnitUpkeep += MaintenanceResolver.UnitUpkeep(state.Units[index].Type);
+            }
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId == city.Id && district.ControllerId == city.OwnerId &&
+                    district.AssignedCitizens > 0 && district.RemainingConstructionTurns <= 0 &&
+                    !district.IsMaintenanceSuspended)
+                    result.FacilityUpkeep += MaintenanceResolver.DistrictUpkeep(district.Type);
             }
         }
 
@@ -146,12 +181,5 @@ namespace LittleCiv.Core
             return false;
         }
 
-        private static void ResetProduction(CityState city)
-        {
-            city.LastFoodProduction = 0;
-            city.LastGoldProduction = 0;
-            city.LastScienceProduction = 0;
-            city.LastCultureProduction = 0;
-        }
     }
 }

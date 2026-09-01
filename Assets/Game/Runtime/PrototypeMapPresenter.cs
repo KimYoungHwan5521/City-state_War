@@ -218,10 +218,35 @@ namespace LittleCiv.Runtime
             }
 
             var city = state.Cities[focusedCityIndex];
-            GUI.Box(new Rect(16f, 16f, 300f, 76f), string.Empty);
-            GUI.Label(new Rect(28f, 25f, 270f, 22f), $"City {city.Name}  World ({city.WorldQ}, {city.WorldR})");
-            GUI.Label(new Rect(28f, 47f, 270f, 22f), "Tab: next city | WASD: pan | Wheel: zoom");
-            GUI.Label(new Rect(28f, 68f, 270f, 22f), "Select a boundary tile to show linked cities");
+            var economy = CityEconomyResolver.CalculateBreakdown(state, city);
+            GUI.Box(new Rect(16f, 16f, 390f, 286f), string.Empty);
+            GUI.Label(new Rect(28f, 25f, 360f, 22f), $"City {city.Name}  World ({city.WorldQ}, {city.WorldR})");
+            GUI.Label(new Rect(28f, 47f, 360f, 22f),
+                $"Population {city.Population} | Gold {city.Gold} | Stored food {city.StoredFood}");
+            DrawYieldRow(28f, 73f, "Food", economy.Food);
+            GUI.Label(new Rect(44f, 94f, 340f, 20f),
+                $"Consumption -{economy.PopulationConsumption} => Net {Signed(economy.FoodNet)}");
+            DrawYieldRow(28f, 118f, "Gold", economy.Gold);
+            GUI.Label(new Rect(44f, 139f, 340f, 20f),
+                $"Upkeep: units -{economy.UnitUpkeep}, facilities -{economy.FacilityUpkeep}");
+            DrawYieldRow(28f, 163f, "Science", economy.Science);
+            DrawYieldRow(28f, 187f, "Culture", economy.Culture);
+            GUI.Label(new Rect(28f, 214f, 360f, 20f),
+                $"Growth {city.GrowthProgress}/{economy.GrowthRequired} | Famine {city.FamineProgress}/{economy.FamineRequired}");
+            GUI.Label(new Rect(28f, 241f, 360f, 20f), "Tab: next city | WASD: pan | Wheel: zoom");
+            GUI.Label(new Rect(28f, 263f, 360f, 22f), "Select a boundary tile to show linked cities");
+        }
+
+        private static void DrawYieldRow(float x, float y, string label, YieldBreakdown value)
+        {
+            GUI.Label(new Rect(x, y, 360f, 20f),
+                $"{label} {value.Total} = government {value.Government} + district {value.DistrictBase} " +
+                $"+ resource {value.ResourceBonus} + adjacency {value.AdjacencyBonus}");
+        }
+
+        private static string Signed(int value)
+        {
+            return value > 0 ? $"+{value}" : value.ToString();
         }
     }
 }
