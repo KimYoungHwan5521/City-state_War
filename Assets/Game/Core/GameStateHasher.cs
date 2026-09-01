@@ -73,6 +73,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.FamineProgress);
                 Add(ref hash, item.ResearchPoints);
                 Add(ref hash, item.LastFoodProduction);
+                Add(ref hash, item.LastUnitFoodConsumption);
                 Add(ref hash, item.LastGoldProduction);
                 Add(ref hash, item.LastScienceProduction);
                 Add(ref hash, item.LastCultureProduction);
@@ -116,6 +117,7 @@ namespace LittleCiv.Core
             {
                 Add(ref hash, item.Id.Value);
                 Add(ref hash, item.OwnerId.Value);
+                Add(ref hash, item.HomeCityId.Value);
                 Add(ref hash, item.TileId.Value);
                 Add(ref hash, (int)item.Type);
                 Add(ref hash, item.HitPoints);
@@ -125,6 +127,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.HasAutomaticDefense ? 1 : 0);
                 Add(ref hash, item.MaintenancePriority);
                 Add(ref hash, item.CreatedTurn);
+                Add(ref hash, item.ManeuverRecommandTurn);
             }
         }
 
@@ -145,6 +148,8 @@ namespace LittleCiv.Core
                 Add(ref hash, item.CitizenRemovalPriority);
                 Add(ref hash, item.MaintenancePriority);
                 Add(ref hash, item.IsMaintenanceSuspended ? 1 : 0);
+                Add(ref hash, item.IsPillaged ? 1 : 0);
+                Add(ref hash, item.RemainingRepairTurns);
             }
         }
 

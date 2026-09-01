@@ -90,13 +90,13 @@ namespace LittleCiv.Tests
 
             new TurnProcessor().Resolve(state, new GameCommand[0]);
 
-            Assert.That(city.LastFoodProduction, Is.EqualTo(4));
+            Assert.That(city.LastFoodProduction, Is.EqualTo(6));
             Assert.That(city.LastGoldProduction, Is.EqualTo(2));
             Assert.That(city.LastScienceProduction, Is.EqualTo(1));
             Assert.That(city.LastCultureProduction, Is.EqualTo(1));
             Assert.That(city.Gold, Is.EqualTo(11));
             Assert.That(city.ResearchPoints, Is.EqualTo(1));
-            Assert.That(city.StoredFood, Is.Zero);
+            Assert.That(city.StoredFood, Is.EqualTo(1));
         }
 
         [Test]

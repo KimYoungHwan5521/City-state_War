@@ -80,6 +80,31 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void AwaitingDeploymentUnitAppearsImmediatelyAfterSpaceOpens()
+        {
+            var fixture = CreateFixture(5007);
+            for (var index = 0; index < UnitRules.CombatUnitsPerTile; index++)
+                AddUnit(fixture.State, fixture.City, fixture.District.TileId, UnitType.Militia);
+            Assert.That(UnitTrainingResolver.TryStart(
+                fixture.State,
+                TrainingCommand(fixture.State, fixture.City, fixture.District, UnitType.Militia),
+                out var training), Is.True);
+            UnitTrainingResolver.Advance(fixture.State);
+            Assert.That(training.IsAwaitingDeployment, Is.True);
+            var movedUnit = fixture.State.Units.First(item => item.TileId == fixture.District.TileId);
+            movedUnit.TileId = fixture.State.Tiles.First(item =>
+                item.CityId == fixture.City.Id && item.Id != fixture.District.TileId).Id;
+
+            var deployed = UnitTrainingResolver.DeployWaiting(fixture.State);
+
+            Assert.That(deployed, Has.Count.EqualTo(1));
+            Assert.That(fixture.State.UnitTrainings.Any(item => item.Id == training.Id), Is.False);
+            Assert.That(fixture.State.Units.Count(item =>
+                item.TileId == fixture.District.TileId && !UnitRules.IsSupply(item.Type)),
+                Is.EqualTo(UnitRules.CombatUnitsPerTile));
+        }
+
+        [Test]
         public void TrainingStateSurvivesCopyAndChangesDeterministicHash()
         {
             var fixture = CreateFixture(5004);

@@ -54,7 +54,7 @@ namespace LittleCiv.Core
 
         private static void ResolveCity(GameState state, CityState city, MaintenanceResolution result)
         {
-            var units = state.Units.FindAll(item => item.OwnerId == city.OwnerId);
+            var units = state.Units.FindAll(item => UnitBelongsToCity(state, item, city));
             units.Sort(CompareUnitsForDisband);
             var unitCost = SumUnitCost(units);
             while (unitCost > city.Gold && units.Count > 0)
@@ -96,10 +96,19 @@ namespace LittleCiv.Core
             city.Gold -= facilityCost;
         }
 
+        private static bool UnitBelongsToCity(GameState state, UnitState unit, CityState city)
+        {
+            if (unit.OwnerId != city.OwnerId) return false;
+            if (unit.HomeCityId.IsValid) return unit.HomeCityId == city.Id;
+            var tile = state.Tiles.Find(item => item.Id == unit.TileId);
+            return tile != null && tile.CityId == city.Id;
+        }
+
         private static bool IsStaffedAndControlled(DistrictState district, CityState city)
         {
             return district.RemainingConstructionTurns <= 0 && district.AssignedCitizens > 0 &&
-                   district.ControllerId == city.OwnerId;
+                   district.ControllerId == city.OwnerId && !district.IsPillaged &&
+                   district.RemainingRepairTurns <= 0;
         }
 
         private static int CompareUnitsForDisband(UnitState left, UnitState right)

@@ -7,15 +7,15 @@ namespace LittleCiv.Tests
     public sealed class CityStorageTests
     {
         [Test]
-        public void GovernmentProductionExactlyFeedsStartingPopulation()
+        public void GovernmentProductionFeedsPopulationAndMilitiaWithOneGrowthSurplus()
         {
             var state = PrototypeMatchFactory.Create(4500);
             var city = state.Cities[0];
 
             new TurnProcessor().Resolve(state, new GameCommand[0]);
 
-            Assert.That(city.LastFoodProduction, Is.EqualTo(4));
-            Assert.That(city.StoredFood, Is.Zero);
+            Assert.That(city.LastFoodProduction, Is.EqualTo(6));
+            Assert.That(city.StoredFood, Is.EqualTo(1));
             Assert.That(city.Gold, Is.EqualTo(11));
         }
 
@@ -31,8 +31,8 @@ namespace LittleCiv.Tests
 
             new TurnProcessor().Resolve(state, new GameCommand[0]);
 
-            Assert.That(city.LastFoodProduction, Is.EqualTo(8));
-            Assert.That(city.StoredFood, Is.EqualTo(4));
+            Assert.That(city.LastFoodProduction, Is.EqualTo(10));
+            Assert.That(city.StoredFood, Is.EqualTo(5));
             Assert.That(city.LastGoldProduction, Is.EqualTo(6));
             Assert.That(city.Gold, Is.EqualTo(15));
         }

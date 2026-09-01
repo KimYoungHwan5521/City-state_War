@@ -9,7 +9,8 @@ namespace LittleCiv.Core
         Personal = 1,
         Ground = 2,
         OccupiedAgriculture = 3,
-        SupplyUnit = 4
+        SupplyUnit = 4,
+        HomeTerritory = 5
     }
 
     public sealed class UnitFoodConsumptionRecord
@@ -33,21 +34,32 @@ namespace LittleCiv.Core
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (command == null) throw new ArgumentNullException(nameof(command));
             loadedFood = 0;
-            if (command.PrimaryValue <= 0) return false;
+            if (command.PrimaryValue == 0) return false;
 
             var unit = FindUnit(state, command.SubjectId);
             var city = FindCity(state, command.TargetId);
             if (unit == null || city == null || unit.OwnerId != command.PlayerId ||
-                city.OwnerId != command.PlayerId || city.StoredFood <= 0) return false;
+                city.OwnerId != command.PlayerId) return false;
             var tile = FindTile(state, unit.TileId);
             if (tile == null || tile.CityId != city.Id || tile.ControllerId != command.PlayerId) return false;
 
-            var freeCapacity = UnitRules.FoodCapacity(unit.Type) - unit.CarriedFood;
-            if (freeCapacity <= 0) return false;
-            loadedFood = Math.Min(command.PrimaryValue, Math.Min(freeCapacity, city.StoredFood));
-            if (loadedFood <= 0) return false;
-            city.StoredFood -= loadedFood;
-            unit.CarriedFood += loadedFood;
+            if (command.PrimaryValue > 0)
+            {
+                var freeCapacity = UnitRules.FoodCapacity(unit.Type) - unit.CarriedFood;
+                if (freeCapacity <= 0 || city.StoredFood <= 0) return false;
+                loadedFood = Math.Min(command.PrimaryValue, Math.Min(freeCapacity, city.StoredFood));
+                if (loadedFood <= 0) return false;
+                city.StoredFood -= loadedFood;
+                unit.CarriedFood += loadedFood;
+            }
+            else
+            {
+                var returned = Math.Min(-command.PrimaryValue, unit.CarriedFood);
+                if (returned <= 0) return false;
+                loadedFood = -returned;
+                unit.CarriedFood -= returned;
+                city.StoredFood += returned;
+            }
             return true;
         }
 
@@ -55,6 +67,8 @@ namespace LittleCiv.Core
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             var result = new UnitFoodConsumptionResult();
+            for (var cityIndex = 0; cityIndex < state.Cities.Count; cityIndex++)
+                state.Cities[cityIndex].LastUnitFoodConsumption = 0;
             var units = new List<UnitState>(state.Units);
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
             for (var index = 0; index < units.Count; index++)
@@ -64,7 +78,9 @@ namespace LittleCiv.Core
                 var required = UnitRules.FoodConsumption(unit.Type);
                 var source = ConsumeGroundFood(state, unit, required)
                     ? UnitFoodSource.Ground
-                    : IsSuppliedByOccupiedAgriculture(state, unit)
+                    : TryConsumeHomeTerritoryFood(state, unit, required)
+                        ? UnitFoodSource.HomeTerritory
+                        : IsSuppliedByOccupiedAgriculture(state, unit)
                         ? UnitFoodSource.OccupiedAgriculture
                         : ConsumePersonalFood(unit, required)
                             ? UnitFoodSource.Personal
@@ -85,6 +101,19 @@ namespace LittleCiv.Core
                 }
             }
             return result;
+        }
+
+        private static bool TryConsumeHomeTerritoryFood(GameState state, UnitState unit, int amount)
+        {
+            var tile = FindTile(state, unit.TileId);
+            if (tile == null || tile.ControllerId != unit.OwnerId || tile.IsSharedBoundary) return false;
+            var city = FindCity(state, tile.CityId);
+            if (city == null || city.OwnerId != unit.OwnerId) return false;
+            var available = city.StoredFood + city.LastFoodProduction - city.Population -
+                            city.LastUnitFoodConsumption;
+            if (available < amount) return false;
+            city.LastUnitFoodConsumption += amount;
+            return true;
         }
 
         private static bool ConsumeGroundFood(GameState state, UnitState unit, int amount)
@@ -138,7 +167,6 @@ namespace LittleCiv.Core
             var receiver = FindUnit(state, command.TargetId);
             if (supplier == null || receiver == null || supplier.OwnerId != command.PlayerId ||
                 receiver.OwnerId != command.PlayerId || supplier.TileId != receiver.TileId ||
-                !UnitRules.IsSupply(supplier.Type) || UnitRules.IsSupply(receiver.Type) ||
                 supplier.CarriedFood <= 0) return false;
 
             var freeCapacity = UnitRules.FoodCapacity(receiver.Type) - receiver.CarriedFood;

@@ -62,6 +62,61 @@ namespace LittleCiv.Core
             return completed;
         }
 
+        public static bool TryStartRepair(GameState state, GameCommand command, out DistrictState district)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            district = FindDistrict(state, command.SubjectId);
+            if (district == null || district.RemainingRepairTurns > 0 ||
+                district.Type == DistrictType.Government) return false;
+            var city = FindCity(state, district.CityId);
+            if (city == null || city.OwnerId != command.PlayerId ||
+                district.ControllerId != city.OwnerId) return false;
+            var legacyRecapturedState = !district.IsOperational && district.AssignedCitizens > 0 &&
+                                       district.RemainingConstructionTurns <= 0 &&
+                                       !district.IsMaintenanceSuspended;
+            if (!district.IsPillaged && !legacyRecapturedState) return false;
+            district.IsPillaged = true;
+            district.RemainingRepairTurns = RepairTurns(district.Type);
+            district.IsOperational = false;
+            return true;
+        }
+
+        public static List<EntityId> AdvanceRepairs(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var completed = new List<EntityId>();
+            var districts = new List<DistrictState>(state.Districts);
+            districts.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var i = 0; i < districts.Count; i++)
+            {
+                var district = districts[i];
+                if (!district.IsPillaged || district.RemainingRepairTurns <= 0) continue;
+                var city = FindCity(state, district.CityId);
+                if (city == null || district.ControllerId != city.OwnerId) continue;
+                district.RemainingRepairTurns--;
+                if (district.RemainingRepairTurns > 0) continue;
+                district.IsPillaged = false;
+                district.IsOperational = district.AssignedCitizens > 0 && !district.IsMaintenanceSuspended;
+                completed.Add(district.Id);
+            }
+            return completed;
+        }
+
+        public static int RepairTurns(DistrictType type)
+        {
+            switch (type)
+            {
+                case DistrictType.Agriculture:
+                case DistrictType.Commerce: return 2;
+                case DistrictType.Science:
+                case DistrictType.Culture:
+                case DistrictType.Military: return 3;
+                case DistrictType.NuclearFacility: return 5;
+                default: return 0;
+            }
+        }
+
         public static int CountFreeCitizens(GameState state, CityState city)
         {
             var assigned = city.GovernmentCitizens;
@@ -103,6 +158,13 @@ namespace LittleCiv.Core
             {
                 if (state.Districts[i].TileId == tileId) return state.Districts[i];
             }
+            return null;
+        }
+
+        private static DistrictState FindDistrict(GameState state, EntityId districtId)
+        {
+            for (var i = 0; i < state.Districts.Count; i++)
+                if (state.Districts[i].Id == districtId) return state.Districts[i];
             return null;
         }
 

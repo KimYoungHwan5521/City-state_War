@@ -38,6 +38,24 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void NegativeFoodAdjustmentReturnsCarriedFoodToOwnedCityStorage()
+        {
+            var state = PrototypeMatchFactory.Create(6012);
+            var city = state.Cities[0];
+            var unit = state.Units.First(item => item.OwnerId == city.OwnerId);
+            city.StoredFood = 2;
+            unit.CarriedFood = 5;
+            int adjustment;
+
+            var accepted = UnitFoodResolver.TryLoad(state, LoadCommand(state, city, unit, -3), out adjustment);
+
+            Assert.That(accepted, Is.True);
+            Assert.That(adjustment, Is.EqualTo(-3));
+            Assert.That(unit.CarriedFood, Is.EqualTo(2));
+            Assert.That(city.StoredFood, Is.EqualTo(5));
+        }
+
+        [Test]
         public void LoadFoodRejectsEnemyCityAndOccupiedHomeTile()
         {
             var state = PrototypeMatchFactory.Create(6001);
@@ -55,7 +73,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void FoodPhaseConsumesOnePerExistingUnitAndSkipsNewRecruit()
+        public void HomeTerritorySuppliesExistingUnitWithoutUsingCarriedFoodAndSkipsNewRecruit()
         {
             var state = PrototypeMatchFactory.Create(6002);
             var existing = state.Units[0];
@@ -67,13 +85,32 @@ namespace LittleCiv.Tests
                 CreatedTurn = state.TurnNumber
             };
             state.Units.Add(recruit);
+            CityEconomyResolver.ResolveProduction(state);
 
             var result = UnitFoodResolver.Consume(state);
 
-            Assert.That(existing.CarriedFood, Is.EqualTo(1));
+            Assert.That(existing.CarriedFood, Is.EqualTo(2));
             Assert.That(result.SuppliedUnitIds, Does.Contain(existing.Id));
+            Assert.That(result.Records.Single(item => item.UnitId == existing.Id).Source,
+                Is.EqualTo(UnitFoodSource.HomeTerritory));
             Assert.That(recruit.CarriedFood, Is.EqualTo(2));
             Assert.That(result.SuppliedUnitIds.Contains(recruit.Id), Is.False);
+        }
+
+        [Test]
+        public void UnitOutsideHomeTerritoryConsumesPersonalFood()
+        {
+            var state = PrototypeMatchFactory.Create(6011);
+            var unit = state.Units[0];
+            var enemyCity = state.Cities.First(item => item.OwnerId != unit.OwnerId);
+            unit.TileId = state.Tiles.First(item => item.CityId == enemyCity.Id).Id;
+            unit.CarriedFood = 2;
+
+            var result = UnitFoodResolver.Consume(state);
+
+            Assert.That(unit.CarriedFood, Is.EqualTo(1));
+            Assert.That(result.Records.Single(item => item.UnitId == unit.Id).Source,
+                Is.EqualTo(UnitFoodSource.Personal));
         }
 
         [Test]
@@ -87,7 +124,7 @@ namespace LittleCiv.Tests
 
             var resolution = new TurnProcessor().Resolve(state, new[] { LoadCommand(state, city, unit, 3) });
 
-            Assert.That(unit.CarriedFood, Is.EqualTo(4));
+            Assert.That(unit.CarriedFood, Is.EqualTo(5));
             Assert.That(resolution.Events.Any(item => item.Type == GameEventType.UnitFoodConsumed &&
                 item.SourceId == unit.Id), Is.True);
             Assert.That(resolution.Events.Any(item => item.Type == GameEventType.UnitFoodLoaded &&
@@ -114,7 +151,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void TransferRejectsNonSupplyEnemyAndDifferentTile()
+        public void AnyFriendlySameTileUnitsCanExchangeFoodButEnemyAndDifferentTileAreRejected()
         {
             var state = PrototypeMatchFactory.Create(6005);
             var city = state.Cities[0];
@@ -127,7 +164,11 @@ namespace LittleCiv.Tests
             int transferred;
 
             Assert.That(UnitFoodResolver.TryTransfer(
-                state, TransferCommand(state, ordinary, receiver, 1), out transferred), Is.False);
+                state, TransferCommand(state, ordinary, receiver, 1), out transferred), Is.True);
+            Assert.That(transferred, Is.EqualTo(1));
+            Assert.That(UnitFoodResolver.TryTransfer(
+                state, TransferCommand(state, ordinary, supplier, 2), out transferred), Is.True);
+            Assert.That(transferred, Is.EqualTo(2));
             Assert.That(UnitFoodResolver.TryTransfer(
                 state, TransferCommand(state, supplier, enemy, 1), out transferred), Is.False);
             supplier.TileId = state.Tiles.First(item => item.CityId == city.Id && item.Id != receiver.TileId).Id;
@@ -187,7 +228,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void AgricultureDoesNotSupplyOriginalOwnerOrOccupierFromAnotherTile()
+        public void AgricultureDoesNotSupplyOccupierFromAnotherTileAndOriginalOwnerUsesHomeSupply()
         {
             var fixture = OccupiedAgricultureFixture(6009);
             fixture.Unit.TileId = fixture.State.Tiles.First(item =>
@@ -195,13 +236,14 @@ namespace LittleCiv.Tests
             fixture.Unit.CarriedFood = 1;
             var originalOwner = AddUnit(
                 fixture.State, fixture.VictimCity, fixture.Tile.Id, UnitType.Militia, 1);
+            CityEconomyResolver.ResolveProduction(fixture.State);
 
             var result = UnitFoodResolver.Consume(fixture.State);
 
             Assert.That(result.Records.Single(item => item.UnitId == fixture.Unit.Id).Source,
                 Is.EqualTo(UnitFoodSource.Personal));
             Assert.That(result.Records.Single(item => item.UnitId == originalOwner.Id).Source,
-                Is.EqualTo(UnitFoodSource.Personal));
+                Is.EqualTo(UnitFoodSource.HomeTerritory));
         }
 
         [Test]

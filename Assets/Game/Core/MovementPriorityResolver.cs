@@ -8,6 +8,8 @@ namespace LittleCiv.Core
         public readonly List<GameCommand> OrderedCommands = new List<GameCommand>();
         public readonly Dictionary<EntityId, MovementStopReason> BlockedCommandReasons =
             new Dictionary<EntityId, MovementStopReason>();
+        public readonly Dictionary<EntityId, int> BlockedPathIndices =
+            new Dictionary<EntityId, int>();
     }
 
     public static class MovementPriorityResolver
@@ -67,6 +69,8 @@ namespace LittleCiv.Core
                     {
                         plan.BlockedCommandReasons[left.CommandId] = MovementStopReason.SwapConflict;
                         plan.BlockedCommandReasons[right.CommandId] = MovementStopReason.SwapConflict;
+                        plan.BlockedPathIndices[left.CommandId] = 0;
+                        plan.BlockedPathIndices[right.CommandId] = 0;
                     }
                 }
             }
@@ -82,7 +86,7 @@ namespace LittleCiv.Core
             {
                 var command = moves[i];
                 if (blocked.ContainsKey(command.CommandId)) continue;
-                var destination = PriorityDestination(state, command);
+                var destination = PriorityDestination(state, command, moves);
                 if (!destination.IsValid)
                 {
                     continue;
@@ -116,6 +120,7 @@ namespace LittleCiv.Core
                 else
                 {
                     plan.BlockedCommandReasons[command.CommandId] = MovementStopReason.PriorityLost;
+                    plan.BlockedPathIndices[command.CommandId] = command.Path.IndexOf(destination);
                 }
             }
         }
@@ -162,13 +167,21 @@ namespace LittleCiv.Core
             return int.MaxValue;
         }
 
-        private static EntityId PriorityDestination(GameState state, GameCommand command)
+        private static EntityId PriorityDestination(
+            GameState state,
+            GameCommand command,
+            List<GameCommand> allMoves)
         {
             if (command.Path == null || command.Path.Count == 0) return default;
             for (var i = 0; i < command.Path.Count; i++)
             {
-                var tile = FindTile(state, command.Path[i]);
-                if (tile != null && tile.IsSharedBoundary) return command.Path[i];
+                for (var moveIndex = 0; moveIndex < allMoves.Count; moveIndex++)
+                {
+                    var other = allMoves[moveIndex];
+                    if (other.CommandId == command.CommandId || other.PlayerId == command.PlayerId ||
+                        other.Path == null) continue;
+                    if (other.Path.Contains(command.Path[i])) return command.Path[i];
+                }
             }
             return command.Path[0];
         }

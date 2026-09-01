@@ -52,7 +52,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 12;
+        public const int CurrentSchemaVersion = 14;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -118,6 +118,7 @@ namespace LittleCiv.Core
         public int FamineProgress;
         public int ResearchPoints;
         public int LastFoodProduction;
+        public int LastUnitFoodConsumption;
         public int LastGoldProduction;
         public int LastScienceProduction;
         public int LastCultureProduction;
@@ -145,6 +146,7 @@ namespace LittleCiv.Core
     {
         public EntityId Id;
         public EntityId OwnerId;
+        public EntityId HomeCityId;
         public EntityId TileId;
         public UnitType Type;
         public int HitPoints;
@@ -154,6 +156,7 @@ namespace LittleCiv.Core
         public bool HasAutomaticDefense;
         public int MaintenancePriority;
         public int CreatedTurn;
+        public int ManeuverRecommandTurn;
     }
 
     [Serializable]
@@ -170,6 +173,8 @@ namespace LittleCiv.Core
         public int CitizenRemovalPriority;
         public int MaintenancePriority;
         public bool IsMaintenanceSuspended;
+        public bool IsPillaged;
+        public int RemainingRepairTurns;
     }
 
     [Serializable]

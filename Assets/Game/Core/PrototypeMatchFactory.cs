@@ -87,6 +87,7 @@ namespace LittleCiv.Core
                 {
                     Id = state.AllocateId(),
                     OwnerId = city.OwnerId,
+                    HomeCityId = city.Id,
                     TileId = centerPlacement.TileId,
                     Type = UnitType.Militia,
                     HitPoints = 16,

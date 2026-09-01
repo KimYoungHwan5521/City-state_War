@@ -100,6 +100,14 @@ namespace LittleCiv.Core
                             GameEventType.DistrictConstructionCompleted,
                             completedDistricts[completedIndex]));
                     }
+                    var completedRepairs = DistrictConstructionResolver.AdvanceRepairs(state);
+                    for (var repairIndex = 0; repairIndex < completedRepairs.Count; repairIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.DistrictRepairCompleted,
+                            completedRepairs[repairIndex]));
+                    }
                     var trainingAdvance = UnitTrainingResolver.Advance(state);
                     for (var unitIndex = 0; unitIndex < trainingAdvance.CompletedUnitIds.Count; unitIndex++)
                     {
@@ -234,6 +242,19 @@ namespace LittleCiv.Core
                 if (phase == TurnPhase.MovementCombatOccupation)
                 {
                     var blockedUnits = ResolveMovementCommands(state, resolution);
+                    OccupationResolver.ReleaseVacatedDistricts(state);
+                    GroundFoodResolver.ReconcileVacatedOwnership(state);
+                    var deployedUnits = UnitTrainingResolver.DeployWaiting(state);
+                    for (var deploymentIndex = 0; deploymentIndex < deployedUnits.Count; deploymentIndex++)
+                    {
+                        var deployed = FindUnit(state, deployedUnits[deploymentIndex]);
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitTrainingCompleted,
+                            deployed.Id,
+                            deployed.TileId,
+                            (int)deployed.Type));
+                    }
                     AddUnitWaitDefaults(state, sortedCommands, resolution);
                     FinalizeAutomaticDefense(state, blockedUnits);
                 }
@@ -285,6 +306,7 @@ namespace LittleCiv.Core
                 var loadedFood = 0;
                 var transferredFood = 0;
                 UnitPromotionResult promotion = null;
+                DistrictState startedRepair = null;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
@@ -324,6 +346,12 @@ namespace LittleCiv.Core
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
                 }
+                if (accepted && command.Type == GameCommandType.RepairDistrict &&
+                    !DistrictConstructionResolver.TryStartRepair(state, command, out startedRepair))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
                 resolution.Events.Add(CreateEvent(
                     state.TurnNumber,
                     accepted ? GameEventType.CommandAccepted : GameEventType.CommandRejected,
@@ -354,7 +382,7 @@ namespace LittleCiv.Core
                             (int)startedTraining.Type,
                             startedTraining.RemainingTurns));
                     }
-                    if (loadedFood > 0)
+                    if (loadedFood != 0)
                     {
                         resolution.Events.Add(CreateEvent(
                             state.TurnNumber,
@@ -381,6 +409,15 @@ namespace LittleCiv.Core
                             promotion.HomeCityId,
                             (int)promotion.PromotedType,
                             promotion.GoldCost));
+                    }
+                    if (startedRepair != null)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.DistrictRepairStarted,
+                            startedRepair.Id,
+                            startedRepair.TileId,
+                            startedRepair.RemainingRepairTurns));
                     }
                 }
             }
@@ -461,14 +498,36 @@ namespace LittleCiv.Core
                 var command = FindCommand(resolution.Commands, blockedCommandId);
                 if (command == null) continue;
                 var unit = FindUnit(state, command.SubjectId);
+                if (unit != null && unit.ManeuverRecommandTurn <= 0)
+                    unit.ManeuverRecommandTurn = state.TurnNumber + 1;
+                var completedSteps = 0;
+                if (blockedReason == MovementStopReason.PriorityLost &&
+                    priorityPlan.BlockedPathIndices.TryGetValue(blockedCommandId, out var blockedPathIndex) &&
+                    blockedPathIndex > 0 && unit != null)
+                {
+                    var prefix = GameCommandCopy.Clone(command);
+                    prefix.Path = command.Path.GetRange(0, blockedPathIndex);
+                    prefix.TargetId = prefix.Path[prefix.Path.Count - 1];
+                    var prefixMovement = MovementResolver.Resolve(state, prefix);
+                    completedSteps = prefixMovement.StepsMoved;
+                    if (completedSteps > 0)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.UnitMoved,
+                            prefixMovement.UnitId,
+                            prefixMovement.FinalTileId,
+                            completedSteps));
+                    }
+                }
                 blockedUnits.Add(command.SubjectId);
-                AddManeuverRequest(resolution, command, unit, 0, blockedReason);
+                AddManeuverRequest(resolution, command, unit, completedSteps, blockedReason);
                 resolution.Events.Add(CreateEvent(
                     state.TurnNumber,
                     GameEventType.MovementBlocked,
                     command.SubjectId,
                     unit == null ? default : unit.TileId,
-                    0,
+                    completedSteps,
                     (int)blockedReason));
             }
 
@@ -476,6 +535,7 @@ namespace LittleCiv.Core
             {
                 var command = priorityPlan.OrderedCommands[i];
                 var movement = MovementResolver.Resolve(state, command);
+                var movedUnit = FindUnit(state, movement.UnitId);
                 if (movement.StepsMoved > 0)
                 {
                     resolution.Events.Add(CreateEvent(
@@ -502,6 +562,8 @@ namespace LittleCiv.Core
                 if (movement.StopReason != MovementStopReason.Completed)
                 {
                     blockedUnits.Add(movement.UnitId);
+                    if (movedUnit != null && movedUnit.ManeuverRecommandTurn <= 0)
+                        movedUnit.ManeuverRecommandTurn = state.TurnNumber + 1;
                     AddManeuverRequest(
                         resolution,
                         command,
@@ -573,7 +635,11 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                unit.RemainingMovement = UnitRules.Movement(unit.Type);
+                // A maneuver re-command continues the interrupted movement budget instead of
+                // granting a fresh turn's movement. The value left on the unit is the exact
+                // budget remaining after its successful prefix movement.
+                if (unit.ManeuverRecommandTurn != state.TurnNumber)
+                    unit.RemainingMovement = UnitRules.Movement(unit.Type);
                 unit.HasAutomaticDefense = false;
             }
         }

@@ -8,31 +8,27 @@ namespace LittleCiv.Core
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             if (leftTileId == rightTileId) return false;
-            var topology = state.MapTopology;
-            if (topology == null || topology.CityViews == null) return false;
+            var left = GlobalCoordinate(state, leftTileId);
+            var right = GlobalCoordinate(state, rightTileId);
+            return left.HasValue && right.HasValue && HexCoord.Distance(left.Value, right.Value) == 1;
+        }
 
-            for (var i = 0; i < topology.CityViews.Count; i++)
+        public static HexCoord? GlobalCoordinate(GameState state, EntityId tileId)
+        {
+            var tile = state.Tiles.Find(item => item.Id == tileId);
+            if (tile == null) return null;
+            var city = state.Cities.Find(item => item.Id == tile.CityId);
+            if (city == null)
             {
-                var view = topology.CityViews[i];
-                CityTilePlacement left = null;
-                CityTilePlacement right = null;
-                for (var j = 0; j < view.Tiles.Count; j++)
+                for (var viewIndex = 0; viewIndex < state.MapTopology.CityViews.Count; viewIndex++)
                 {
-                    var placement = view.Tiles[j];
-                    if (placement.TileId == leftTileId) left = placement;
-                    if (placement.TileId == rightTileId) right = placement;
+                    var placement = state.MapTopology.CityViews[viewIndex].Tiles.Find(item => item.TileId == tileId);
+                    if (placement != null) return new HexCoord(placement.LocalQ, placement.LocalR);
                 }
-
-                if (left != null && right != null &&
-                    HexCoord.Distance(
-                        new HexCoord(left.LocalQ, left.LocalR),
-                        new HexCoord(right.LocalQ, right.LocalR)) == 1)
-                {
-                    return true;
-                }
+                return null;
             }
-
-            return false;
+            var center = WorldMapGenerator.CityCenterCoordinate(city.WorldQ, city.WorldR);
+            return new HexCoord(center.Q + tile.Q, center.R + tile.R);
         }
     }
 }

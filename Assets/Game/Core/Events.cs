@@ -36,7 +36,9 @@ namespace LittleCiv.Core
         UnitStarvationStarted = 29,
         UnitStarvationEnded = 30,
         UnitStarvedToDeath = 31,
-        UnitPromoted = 32
+        UnitPromoted = 32,
+        DistrictRepairStarted = 33,
+        DistrictRepairCompleted = 34
     }
 
     [Serializable]

@@ -6,15 +6,15 @@ namespace LittleCiv.Tests
 {
     public sealed class CityDistrictProductionTests
     {
-        [TestCase(DistrictType.Agriculture, TileResourceType.None, 6, 2, 1, 1)]
-        [TestCase(DistrictType.Agriculture, TileResourceType.Food, 8, 2, 1, 1)]
-        [TestCase(DistrictType.Commerce, TileResourceType.None, 4, 4, 1, 1)]
-        [TestCase(DistrictType.Commerce, TileResourceType.Commerce, 4, 6, 1, 1)]
-        [TestCase(DistrictType.Science, TileResourceType.None, 4, 2, 3, 1)]
-        [TestCase(DistrictType.Science, TileResourceType.Science, 4, 2, 5, 1)]
-        [TestCase(DistrictType.Culture, TileResourceType.None, 4, 2, 1, 3)]
-        [TestCase(DistrictType.Culture, TileResourceType.Culture, 4, 2, 1, 4)]
-        [TestCase(DistrictType.Military, TileResourceType.Food, 4, 2, 1, 1)]
+        [TestCase(DistrictType.Agriculture, TileResourceType.None, 8, 2, 1, 1)]
+        [TestCase(DistrictType.Agriculture, TileResourceType.Food, 10, 2, 1, 1)]
+        [TestCase(DistrictType.Commerce, TileResourceType.None, 6, 4, 1, 1)]
+        [TestCase(DistrictType.Commerce, TileResourceType.Commerce, 6, 6, 1, 1)]
+        [TestCase(DistrictType.Science, TileResourceType.None, 6, 2, 3, 1)]
+        [TestCase(DistrictType.Science, TileResourceType.Science, 6, 2, 5, 1)]
+        [TestCase(DistrictType.Culture, TileResourceType.None, 6, 2, 1, 3)]
+        [TestCase(DistrictType.Culture, TileResourceType.Culture, 6, 2, 1, 4)]
+        [TestCase(DistrictType.Military, TileResourceType.Food, 6, 2, 1, 1)]
         public void OperationalDistrict_ProducesConfiguredBaseAndResourceYield(
             DistrictType type,
             TileResourceType resource,
@@ -55,7 +55,7 @@ namespace LittleCiv.Tests
 
             CityEconomyResolver.ResolveProduction(state);
 
-            Assert.That(city.LastFoodProduction, Is.EqualTo(4));
+            Assert.That(city.LastFoodProduction, Is.EqualTo(6));
             Assert.That(city.LastGoldProduction, Is.EqualTo(2));
             Assert.That(city.LastScienceProduction, Is.EqualTo(1));
             Assert.That(city.LastCultureProduction, Is.EqualTo(1));

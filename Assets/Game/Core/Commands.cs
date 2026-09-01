@@ -17,7 +17,8 @@ namespace LittleCiv.Core
         SetPriority = 9,
         ConfirmTurn = 10,
         TransferFood = 11,
-        PromoteUnit = 12
+        PromoteUnit = 12,
+        RepairDistrict = 13
     }
 
     [Serializable]

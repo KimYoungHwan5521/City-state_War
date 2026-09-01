@@ -20,8 +20,71 @@ namespace LittleCiv.Tests
             Assert.That(result.DistrictOccupied, Is.True);
             Assert.That(fixture.District.ControllerId, Is.EqualTo(fixture.AttackerPlayer));
             Assert.That(fixture.District.IsOperational, Is.False);
+            Assert.That(fixture.District.IsPillaged, Is.True);
             Assert.That(fixture.State.Tiles[1].ControllerId, Is.EqualTo(fixture.AttackerPlayer));
             Assert.That(fixture.State.IsGameOver, Is.False);
+        }
+
+        [Test]
+        public void LastOccupyingUnitLeavingImmediatelyReleasesDistrictControl()
+        {
+            var fixture = CreateFixture(DistrictType.Commerce, includeDefender: false);
+            fixture.Attacker.TileId = fixture.TargetTile;
+            OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            fixture.Attacker.TileId = fixture.State.Tiles.First(item => item.Id != fixture.TargetTile).Id;
+
+            var released = OccupationResolver.ReleaseVacatedDistricts(fixture.State);
+
+            Assert.That(released, Does.Contain(fixture.District.Id));
+            Assert.That(fixture.District.ControllerId, Is.EqualTo(fixture.DefenderPlayer));
+            Assert.That(fixture.State.Tiles.Single(item => item.Id == fixture.TargetTile).ControllerId,
+                Is.EqualTo(fixture.DefenderPlayer));
+            Assert.That(fixture.District.IsPillaged, Is.True);
+        }
+
+        [Test]
+        public void RecapturedPillagedDistrictCanBeRepairedToOperation()
+        {
+            var fixture = CreateFixture(DistrictType.Science, includeDefender: false);
+            OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
+            MaintenanceResolver.Resolve(fixture.State);
+            Assert.That(fixture.District.IsOperational, Is.False);
+            var command = new GameCommand
+            {
+                CommandId = fixture.State.AllocateId(), PlayerId = fixture.DefenderPlayer,
+                TurnNumber = fixture.State.TurnNumber, Type = GameCommandType.RepairDistrict,
+                SubjectId = fixture.District.Id
+            };
+
+            Assert.That(DistrictConstructionResolver.TryStartRepair(
+                fixture.State, command, out var repairing), Is.True);
+            Assert.That(repairing.RemainingRepairTurns, Is.EqualTo(3));
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+            Assert.That(fixture.District.IsPillaged, Is.True);
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+            Assert.That(fixture.District.IsPillaged, Is.False);
+            Assert.That(fixture.District.IsOperational, Is.True);
+        }
+
+        [Test]
+        public void LegacyRecapturedInactiveDistrictIsAcceptedAsPillagedForRepair()
+        {
+            var fixture = CreateFixture(DistrictType.Military, includeDefender: false);
+            fixture.District.IsOperational = false;
+            fixture.District.IsPillaged = false;
+            var command = new GameCommand
+            {
+                CommandId = fixture.State.AllocateId(), PlayerId = fixture.DefenderPlayer,
+                TurnNumber = fixture.State.TurnNumber, Type = GameCommandType.RepairDistrict,
+                SubjectId = fixture.District.Id
+            };
+
+            Assert.That(DistrictConstructionResolver.TryStartRepair(
+                fixture.State, command, out var repairing), Is.True);
+            Assert.That(repairing.IsPillaged, Is.True);
+            Assert.That(repairing.RemainingRepairTurns, Is.EqualTo(3));
         }
 
         [Test]
@@ -120,13 +183,18 @@ namespace LittleCiv.Tests
             var defenderPlayer = state.AllocateId();
             state.Players.Add(new PlayerState { Id = attackerPlayer, Slot = PlayerSlot.PlayerOne });
             state.Players.Add(new PlayerState { Id = defenderPlayer, Slot = PlayerSlot.PlayerTwo });
+            var defenderCity = state.AllocateId();
+            state.Cities.Add(new CityState { Id = defenderCity, OwnerId = defenderPlayer });
             var sourceTile = state.AllocateId();
             var targetTile = state.AllocateId();
             state.Tiles.Add(new TileState { Id = sourceTile, ControllerId = attackerPlayer });
-            state.Tiles.Add(new TileState { Id = targetTile, ControllerId = defenderPlayer });
+            state.Tiles.Add(new TileState
+            {
+                Id = targetTile, CityId = defenderCity, ControllerId = defenderPlayer
+            });
             state.MapTopology.CityViews.Add(new CityMapView
             {
-                CityId = state.AllocateId(),
+                CityId = defenderCity,
                 Tiles = new List<CityTilePlacement>
                 {
                     new CityTilePlacement { TileId = sourceTile, LocalQ = 0, LocalR = 0 },
@@ -136,10 +204,12 @@ namespace LittleCiv.Tests
             var district = new DistrictState
             {
                 Id = state.AllocateId(),
+                CityId = defenderCity,
                 TileId = targetTile,
                 Type = type,
                 ControllerId = defenderPlayer,
-                IsOperational = true
+                IsOperational = true,
+                AssignedCitizens = 1
             };
             state.Districts.Add(district);
             var attacker = new UnitState

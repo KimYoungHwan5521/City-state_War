@@ -11,7 +11,7 @@ namespace LittleCiv.Core
             for (var index = 0; index < state.Cities.Count; index++)
             {
                 var city = state.Cities[index];
-                var netProduction = city.LastFoodProduction - city.Population;
+                var netProduction = city.LastFoodProduction - city.Population - city.LastUnitFoodConsumption;
                 city.StoredFood = Math.Max(0, city.StoredFood + netProduction);
             }
         }

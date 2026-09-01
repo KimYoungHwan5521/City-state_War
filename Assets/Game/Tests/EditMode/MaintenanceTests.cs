@@ -139,6 +139,19 @@ namespace LittleCiv.Tests
                 item.SourceId == unit.Id && item.TargetId == city.Id && item.PrimaryValue == 8), Is.True);
         }
 
+        [Test]
+        public void NeutralCitiesPayOnlyTheirOwnMilitiaAndKeepAllStartingUnits()
+        {
+            var state = PrototypeMatchFactory.Create(4807);
+            var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
+
+            new TurnProcessor().Resolve(state, new GameCommand[0]);
+            new TurnProcessor().Resolve(state, new GameCommand[0]);
+
+            Assert.That(state.Units.Count(item => item.OwnerId == neutral.Id), Is.EqualTo(8));
+            Assert.That(state.Cities.Where(item => item.OwnerId == neutral.Id).All(item => item.Gold >= 0), Is.True);
+        }
+
         private static UnitState AddUnit(GameState state, CityState city, UnitType type, int food)
         {
             var unit = new UnitState

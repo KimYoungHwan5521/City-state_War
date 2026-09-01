@@ -14,10 +14,11 @@ namespace LittleCiv.Tests
 
             var result = CityEconomyResolver.CalculateBreakdown(state, city);
 
-            Assert.That(result.Food.Government, Is.EqualTo(4));
-            Assert.That(result.Food.Total, Is.EqualTo(4));
+            Assert.That(result.Food.Government, Is.EqualTo(6));
+            Assert.That(result.Food.Total, Is.EqualTo(6));
             Assert.That(result.PopulationConsumption, Is.EqualTo(4));
-            Assert.That(result.FoodNet, Is.Zero);
+            Assert.That(result.UnitFoodConsumption, Is.EqualTo(1));
+            Assert.That(result.FoodNet, Is.EqualTo(1));
             Assert.That(result.Gold.Total, Is.EqualTo(2));
             Assert.That(result.UnitUpkeep, Is.EqualTo(1));
             Assert.That(result.GrowthRequired, Is.EqualTo(12));

@@ -21,6 +21,15 @@ namespace LittleCiv.Core
 
             tile.GroundFood += amount;
             var occupant = FindOccupyingOwner(state, tileId);
+            var city = FindCity(state, tile.CityId);
+            if (city != null && occupant == city.OwnerId)
+            {
+                city.StoredFood += tile.GroundFood;
+                tile.GroundFood = 0;
+                tile.GroundFoodOwnerId = default;
+                tile.GroundFoodReturnTurn = 0;
+                return city.OwnerId;
+            }
             if (occupant.IsValid)
             {
                 tile.GroundFoodOwnerId = occupant;
@@ -62,6 +71,31 @@ namespace LittleCiv.Core
             return result;
         }
 
+        public static void ReconcileVacatedOwnership(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            for (var index = 0; index < state.Tiles.Count; index++)
+            {
+                var tile = state.Tiles[index];
+                if (tile.GroundFood <= 0 || tile.IsSharedBoundary) continue;
+                var city = FindCity(state, tile.CityId);
+                if (city != null && HasUnitOwnedBy(state, tile.Id, city.OwnerId))
+                {
+                    city.StoredFood += tile.GroundFood;
+                    tile.GroundFood = 0;
+                    tile.GroundFoodOwnerId = default;
+                    tile.GroundFoodReturnTurn = 0;
+                    continue;
+                }
+                if (tile.GroundFoodReturnTurn > 0) continue;
+                if (tile.GroundFoodOwnerId.IsValid &&
+                    HasUnitOwnedBy(state, tile.Id, tile.GroundFoodOwnerId)) continue;
+                if (city == null) continue;
+                tile.GroundFoodOwnerId = city.OwnerId;
+                tile.GroundFoodReturnTurn = state.TurnNumber + 2;
+            }
+        }
+
         private static EntityId FindOccupyingOwner(GameState state, EntityId tileId)
         {
             EntityId owner = default;
@@ -78,6 +112,14 @@ namespace LittleCiv.Core
         {
             for (var index = 0; index < state.Units.Count; index++)
                 if (state.Units[index].TileId == tileId && state.Units[index].HitPoints > 0) return true;
+            return false;
+        }
+
+        private static bool HasUnitOwnedBy(GameState state, EntityId tileId, EntityId ownerId)
+        {
+            for (var index = 0; index < state.Units.Count; index++)
+                if (state.Units[index].TileId == tileId && state.Units[index].OwnerId == ownerId &&
+                    state.Units[index].HitPoints > 0) return true;
             return false;
         }
 

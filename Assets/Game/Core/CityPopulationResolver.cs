@@ -13,7 +13,7 @@ namespace LittleCiv.Core
             for (var index = 0; index < state.Cities.Count; index++)
             {
                 var city = state.Cities[index];
-                var surplus = city.LastFoodProduction - city.Population;
+                var surplus = city.LastFoodProduction - city.Population - city.LastUnitFoodConsumption;
                 if (surplus <= 0) continue;
 
                 city.GrowthProgress += surplus;
@@ -36,7 +36,7 @@ namespace LittleCiv.Core
             for (var index = 0; index < state.Cities.Count; index++)
             {
                 var city = state.Cities[index];
-                var deficit = city.Population - city.LastFoodProduction;
+                var deficit = city.Population + city.LastUnitFoodConsumption - city.LastFoodProduction;
                 if (deficit <= 0) continue;
 
                 var requiredFamine = city.Population;

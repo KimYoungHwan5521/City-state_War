@@ -108,4 +108,3 @@ InitTestScene*.unity*
 # Local Photon credentials and import diagnostics
 /Assets/Photon/Fusion/Resources/PhotonAppSettings.asset
 /Assets/Photon/Fusion/Resources/PhotonAppSettings.asset.meta
-/Docs/*AssetImportWorker*crashed*.txt

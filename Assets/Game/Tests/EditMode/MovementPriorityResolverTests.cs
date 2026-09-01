@@ -20,6 +20,48 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void ControlledTile_GivesControllerPriorityWhenRoutesConvergeAfterDifferentFirstSteps()
+        {
+            var fixture = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerTwo);
+            var firstApproach = fixture.State.AllocateId();
+            var secondApproach = fixture.State.AllocateId();
+            fixture.State.Tiles.Add(new TileState { Id = firstApproach, ControllerId = fixture.PlayerOne });
+            fixture.State.Tiles.Add(new TileState { Id = secondApproach, ControllerId = fixture.PlayerTwo });
+            fixture.Commands[0].Path = new List<EntityId> { firstApproach, fixture.Destination };
+            fixture.Commands[1].Path = new List<EntityId> { secondApproach, fixture.Destination };
+
+            var plan = MovementPriorityResolver.Build(fixture.State, fixture.Commands);
+
+            Assert.That(plan.OrderedCommands.Single().PlayerId, Is.EqualTo(fixture.PlayerTwo));
+            Assert.That(plan.BlockedCommandReasons[fixture.Commands[0].CommandId],
+                Is.EqualTo(MovementStopReason.PriorityLost));
+        }
+
+        [Test]
+        public void TurnProcessor_LoserAdvancesToLastTileBeforeLaterContestedDestination()
+        {
+            var fixture = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerTwo);
+            var farLeft = fixture.State.AllocateId();
+            var farRight = fixture.State.AllocateId();
+            fixture.State.Tiles.Add(new TileState { Id = farLeft, ControllerId = fixture.PlayerOne });
+            fixture.State.Tiles.Add(new TileState { Id = farRight, ControllerId = fixture.PlayerTwo });
+            var view = fixture.State.MapTopology.CityViews[0];
+            view.Tiles.Add(new CityTilePlacement { TileId = farLeft, LocalQ = -2, LocalR = 0 });
+            view.Tiles.Add(new CityTilePlacement { TileId = farRight, LocalQ = 2, LocalR = 0 });
+            fixture.UnitOne.TileId = farLeft;
+            fixture.UnitTwo.TileId = farRight;
+            fixture.Commands[0].Path = new List<EntityId> { fixture.PlayerOneStart, fixture.Destination };
+            fixture.Commands[1].Path = new List<EntityId> { fixture.PlayerTwoStart, fixture.Destination };
+
+            var result = new TurnProcessor().Resolve(fixture.State, fixture.Commands);
+
+            Assert.That(fixture.UnitTwo.TileId, Is.EqualTo(fixture.Destination));
+            Assert.That(fixture.UnitOne.TileId, Is.EqualTo(fixture.PlayerOneStart));
+            Assert.That(result.ManeuverRequests.Single(item => item.UnitId == fixture.UnitOne.Id).BlockedTileId,
+                Is.EqualTo(fixture.Destination));
+        }
+
+        [Test]
         public void SharedTile_GivesCloserUnitPriority()
         {
             var fixture = CreateFixture(shared: true, controllerSlot: PlayerSlot.Neutral);
@@ -79,6 +121,33 @@ namespace LittleCiv.Tests
                 item.SourceId == fixture.UnitOne.Id &&
                 item.SecondaryValue == (int)MovementStopReason.PriorityLost), Is.True);
             Assert.That(result.ManeuverRequests.Any(item => item.UnitId == fixture.UnitOne.Id), Is.True);
+        }
+
+        [Test]
+        public void TurnProcessor_RecommandTurnPreservesOnlyInterruptedMovementBudget()
+        {
+            var fixture = CreateFixture(shared: false, controllerSlot: PlayerSlot.PlayerTwo);
+            fixture.State.TurnNumber = 2;
+            fixture.State.Units.Remove(fixture.UnitTwo);
+            fixture.UnitOne.RemainingMovement = 1;
+            fixture.UnitOne.ManeuverRecommandTurn = 2;
+            fixture.Commands = new List<GameCommand>
+            {
+                new GameCommand
+                {
+                    CommandId = new EntityId(8010), PlayerId = fixture.PlayerOne,
+                    TurnNumber = 2, Type = GameCommandType.MoveUnit,
+                    SubjectId = fixture.UnitOne.Id, TargetId = fixture.PlayerTwoStart,
+                    Path = new List<EntityId> { fixture.Destination, fixture.PlayerTwoStart }
+                }
+            };
+
+            var result = new TurnProcessor().Resolve(fixture.State, fixture.Commands);
+
+            Assert.That(fixture.UnitOne.TileId, Is.EqualTo(fixture.Destination));
+            Assert.That(fixture.UnitOne.RemainingMovement, Is.Zero);
+            Assert.That(result.Events.Any(item => item.Type == GameEventType.UnitMoved &&
+                item.SourceId == fixture.UnitOne.Id && item.PrimaryValue == 1), Is.True);
         }
 
         [Test]

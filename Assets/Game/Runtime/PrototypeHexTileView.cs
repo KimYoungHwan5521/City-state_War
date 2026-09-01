@@ -6,18 +6,14 @@ namespace LittleCiv.Runtime
 {
     public sealed class PrototypeHexTileView : MonoBehaviour
     {
-        private PrototypeMapPresenter presenter;
         private GameEntityId tileId;
+
+        public GameEntityId TileId => tileId;
 
         public void Initialize(PrototypeMapPresenter owner, GameEntityId id)
         {
-            presenter = owner;
             tileId = id;
         }
 
-        private void OnMouseDown()
-        {
-            presenter.SelectTile(tileId);
-        }
     }
 }

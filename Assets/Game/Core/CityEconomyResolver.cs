@@ -4,7 +4,7 @@ namespace LittleCiv.Core
 {
     public static class CityEconomyResolver
     {
-        public const int GovernmentFood = 4;
+        public const int GovernmentFood = 6;
         public const int GovernmentGold = 2;
         public const int GovernmentScience = 1;
         public const int GovernmentCulture = 1;
@@ -45,6 +45,7 @@ namespace LittleCiv.Core
                 FamineRequired = city.Population
             };
             AddMaintenance(state, city, result);
+            result.UnitFoodConsumption = CountHomeSuppliedUnits(state, city);
             if (!HasOperationalGovernment(state, city)) return result;
 
             result.Food.Government = GovernmentFood;
@@ -53,6 +54,19 @@ namespace LittleCiv.Core
             result.Culture.Government = GovernmentCulture;
             AddDistrictProduction(state, city, result);
             return result;
+        }
+
+        private static int CountHomeSuppliedUnits(GameState state, CityState city)
+        {
+            var total = 0;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var unit = state.Units[index];
+                var tile = state.Tiles.Find(item => item.Id == unit.TileId);
+                if (unit.OwnerId == city.OwnerId && tile != null && tile.CityId == city.Id &&
+                    tile.ControllerId == city.OwnerId) total += UnitRules.FoodConsumption(unit.Type);
+            }
+            return total;
         }
 
         private static void AddDistrictProduction(GameState state, CityState city, CityEconomyBreakdown result)
@@ -98,7 +112,12 @@ namespace LittleCiv.Core
         {
             for (var index = 0; index < state.Units.Count; index++)
             {
-                if (state.Units[index].OwnerId == city.OwnerId)
+                var unit = state.Units[index];
+                var tile = state.Tiles.Find(item => item.Id == unit.TileId);
+                var belongs = unit.HomeCityId.IsValid
+                    ? unit.HomeCityId == city.Id
+                    : tile != null && tile.CityId == city.Id;
+                if (unit.OwnerId == city.OwnerId && belongs)
                     result.UnitUpkeep += MaintenanceResolver.UnitUpkeep(state.Units[index].Type);
             }
             for (var index = 0; index < state.Districts.Count; index++)
@@ -142,6 +161,35 @@ namespace LittleCiv.Core
                 }
             }
             return count;
+        }
+
+        public static int AdjacencyBonusForDistrict(GameState state, DistrictState district)
+        {
+            if (state == null || district == null) return 0;
+            var city = state.Cities.Find(item => item.Id == district.CityId);
+            if (city == null || district.ControllerId != city.OwnerId || !district.IsOperational ||
+                district.RemainingConstructionTurns > 0 || district.AssignedCitizens <= 0) return 0;
+            return CountAdjacencyBonus(state, city, district);
+        }
+
+        public static int ResourceBonusForDistrict(GameState state, DistrictState district)
+        {
+            if (state == null || district == null || !district.IsOperational ||
+                district.RemainingConstructionTurns > 0 || district.AssignedCitizens <= 0) return 0;
+            var resource = FindTileResource(state, district.TileId);
+            switch (district.Type)
+            {
+                case DistrictType.Agriculture:
+                    return resource == TileResourceType.Food ? AgricultureResourceBonus : 0;
+                case DistrictType.Commerce:
+                    return resource == TileResourceType.Commerce ? CommerceResourceBonus : 0;
+                case DistrictType.Science:
+                    return resource == TileResourceType.Science ? ScienceResourceBonus : 0;
+                case DistrictType.Culture:
+                    return resource == TileResourceType.Culture ? CultureResourceBonus : 0;
+                default:
+                    return 0;
+            }
         }
 
         private static CityTilePlacement FindPlacement(CityMapView view, EntityId tileId)

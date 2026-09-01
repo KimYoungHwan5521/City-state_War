@@ -53,6 +53,7 @@ namespace LittleCiv.Core
                     FamineProgress = item.FamineProgress,
                     ResearchPoints = item.ResearchPoints,
                     LastFoodProduction = item.LastFoodProduction,
+                    LastUnitFoodConsumption = item.LastUnitFoodConsumption,
                     LastGoldProduction = item.LastGoldProduction,
                     LastScienceProduction = item.LastScienceProduction,
                     LastCultureProduction = item.LastCultureProduction
@@ -88,6 +89,7 @@ namespace LittleCiv.Core
                 {
                     Id = item.Id,
                     OwnerId = item.OwnerId,
+                    HomeCityId = item.HomeCityId,
                     TileId = item.TileId,
                     Type = item.Type,
                     HitPoints = item.HitPoints,
@@ -96,7 +98,8 @@ namespace LittleCiv.Core
                     RemainingMovement = item.RemainingMovement,
                     HasAutomaticDefense = item.HasAutomaticDefense,
                     MaintenancePriority = item.MaintenancePriority,
-                    CreatedTurn = item.CreatedTurn
+                    CreatedTurn = item.CreatedTurn,
+                    ManeuverRecommandTurn = item.ManeuverRecommandTurn
                 });
             }
 
@@ -115,7 +118,9 @@ namespace LittleCiv.Core
                     RemainingConstructionTurns = item.RemainingConstructionTurns,
                     CitizenRemovalPriority = item.CitizenRemovalPriority,
                     MaintenancePriority = item.MaintenancePriority,
-                    IsMaintenanceSuspended = item.IsMaintenanceSuspended
+                    IsMaintenanceSuspended = item.IsMaintenanceSuspended,
+                    IsPillaged = item.IsPillaged,
+                    RemainingRepairTurns = item.RemainingRepairTurns
                 });
             }
 

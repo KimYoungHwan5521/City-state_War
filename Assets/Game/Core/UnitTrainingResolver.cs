@@ -67,6 +67,7 @@ namespace LittleCiv.Core
                 {
                     Id = state.AllocateId(),
                     OwnerId = training.OwnerId,
+                    HomeCityId = district.CityId,
                     TileId = district.TileId,
                     Type = training.Type,
                     HitPoints = UnitRules.MaximumHitPoints(training.Type),
@@ -79,6 +80,33 @@ namespace LittleCiv.Core
                 result.CompletedUnitIds.Add(unit.Id);
             }
             return result;
+        }
+
+        public static List<EntityId> DeployWaiting(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var completed = new List<EntityId>();
+            var trainings = new List<UnitTrainingState>(state.UnitTrainings);
+            trainings.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var index = 0; index < trainings.Count; index++)
+            {
+                var training = trainings[index];
+                if (!training.IsAwaitingDeployment) continue;
+                var district = FindDistrict(state, training.DistrictId);
+                if (district == null || !CanOperate(state, district) ||
+                    !HasDeploymentSpace(state, district.TileId, training.Type)) continue;
+                var unit = new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = training.OwnerId,
+                    HomeCityId = district.CityId, TileId = district.TileId,
+                    Type = training.Type, HitPoints = UnitRules.MaximumHitPoints(training.Type),
+                    CarriedFood = 0, RemainingMovement = 0, CreatedTurn = state.TurnNumber
+                };
+                state.Units.Add(unit);
+                state.UnitTrainings.Remove(training);
+                completed.Add(unit.Id);
+            }
+            return completed;
         }
 
         private static bool CanOperate(GameState state, DistrictState district)

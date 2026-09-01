@@ -16,7 +16,8 @@ namespace LittleCiv.Core
         public readonly YieldBreakdown Science = new YieldBreakdown();
         public readonly YieldBreakdown Culture = new YieldBreakdown();
         public int PopulationConsumption;
-        public int FoodNet => Food.Total - PopulationConsumption;
+        public int UnitFoodConsumption;
+        public int FoodNet => Food.Total - PopulationConsumption - UnitFoodConsumption;
         public int GrowthRequired;
         public int FamineRequired;
         public int UnitUpkeep;

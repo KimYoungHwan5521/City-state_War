@@ -22,7 +22,28 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void SurvivingDefenderOwnsDestroyedAttackersFood()
+        public void OccupierLeavingDroppedFoodStartsOneFullTurnReturnGrace()
+        {
+            var fixture = CreateFixture(false);
+            fixture.Attacker.Type = UnitType.IronInfantry;
+            fixture.Attacker.HitPoints = UnitRules.MaximumHitPoints(UnitType.IronInfantry);
+            fixture.Defender.CarriedFood = 5;
+            CombatResolver.Resolve(fixture.State, fixture.Request);
+            fixture.Attacker.TileId = new EntityId(99999);
+
+            GroundFoodResolver.ReconcileVacatedOwnership(fixture.State);
+
+            Assert.That(fixture.Tile.GroundFood, Is.EqualTo(5));
+            Assert.That(fixture.Tile.GroundFoodOwnerId, Is.EqualTo(fixture.City.OwnerId));
+            Assert.That(fixture.Tile.GroundFoodReturnTurn, Is.EqualTo(3));
+            fixture.State.TurnNumber = 2;
+            Assert.That(GroundFoodResolver.ReturnEligibleFood(fixture.State), Is.Empty);
+            fixture.State.TurnNumber = 3;
+            Assert.That(GroundFoodResolver.ReturnEligibleFood(fixture.State), Has.Count.EqualTo(1));
+        }
+
+        [Test]
+        public void SurvivingTerritoryDefenderImmediatelyReturnsDestroyedAttackersFoodToCity()
         {
             var fixture = CreateFixture(false);
             fixture.Attacker.HitPoints = 1;
@@ -31,8 +52,26 @@ namespace LittleCiv.Tests
             var result = CombatResolver.Resolve(fixture.State, fixture.Request);
 
             Assert.That(result.DestroyedUnitIds, Does.Contain(fixture.Attacker.Id));
-            Assert.That(fixture.Tile.GroundFood, Is.EqualTo(4));
-            Assert.That(fixture.Tile.GroundFoodOwnerId, Is.EqualTo(fixture.Defender.OwnerId));
+            Assert.That(fixture.Tile.GroundFood, Is.Zero);
+            Assert.That(fixture.City.StoredFood, Is.EqualTo(4));
+        }
+
+        [Test]
+        public void TerritoryOwnerUnitEnteringDroppedFoodTileReturnsItImmediately()
+        {
+            var fixture = CreateFixture(false);
+            fixture.State.Units.Clear();
+            fixture.Tile.GroundFood = 6;
+            fixture.Tile.GroundFoodOwnerId = fixture.Attacker.OwnerId;
+            fixture.Tile.GroundFoodReturnTurn = 10;
+            fixture.Defender.TileId = fixture.Tile.Id;
+            fixture.State.Units.Add(fixture.Defender);
+
+            GroundFoodResolver.ReconcileVacatedOwnership(fixture.State);
+
+            Assert.That(fixture.Tile.GroundFood, Is.Zero);
+            Assert.That(fixture.City.StoredFood, Is.EqualTo(6));
+            Assert.That(fixture.Tile.GroundFoodReturnTurn, Is.Zero);
         }
 
         [Test]

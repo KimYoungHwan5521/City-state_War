@@ -44,7 +44,18 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void PrototypeMap_EachCityViewContainsThirtySevenBuildableAndTwentyFourBoundaryTiles()
+        public void AdjacentCityCenterUsesRadiusFourTilingOffset()
+        {
+            Assert.That(WorldMapGenerator.CityCenterCoordinate(0, 0), Is.EqualTo(new HexCoord(0, 0)));
+            Assert.That(WorldMapGenerator.CityCenterCoordinate(1, 0), Is.EqualTo(new HexCoord(5, 4)));
+            Assert.That(WorldMapGenerator.CityCenterCoordinate(0, 1), Is.EqualTo(new HexCoord(-4, 9)));
+            Assert.That(HexCoord.Distance(
+                WorldMapGenerator.CityCenterCoordinate(0, 0),
+                WorldMapGenerator.CityCenterCoordinate(1, 0)), Is.EqualTo(9));
+        }
+
+        [Test]
+        public void PrototypeMap_EachCityContainsSixtyOneBuildableTerritoryTiles()
         {
             var state = CreatePrototypeState();
             var topology = WorldMapGenerator.PopulateTiles(state);
@@ -53,15 +64,16 @@ namespace LittleCiv.Tests
             foreach (var view in topology.CityViews)
             {
                 Assert.That(view.Tiles.Count, Is.EqualTo(61));
-                Assert.That(view.Tiles.Count(tile => tile.IsBuildable), Is.EqualTo(37));
-                Assert.That(view.Tiles.Count(tile => !tile.IsBuildable), Is.EqualTo(24));
+                Assert.That(view.Tiles.Count(tile => tile.IsBuildable), Is.EqualTo(61));
+                Assert.That(view.Tiles.Count(tile => !tile.IsBuildable), Is.Zero);
                 Assert.That(view.Tiles.Select(tile => new HexCoord(tile.LocalQ, tile.LocalR)).Distinct().Count(),
                     Is.EqualTo(61));
             }
+            Assert.That(state.Tiles.Any(tile => tile.IsSharedBoundary), Is.False);
         }
 
         [Test]
-        public void PrototypeMap_AdjacentCitiesShareExactlyFiveTileIdsInReverseSideOrder()
+        public void PrototypeMap_AdjacentCityTerritoriesUseDistinctButDirectlyAdjacentTiles()
         {
             var state = CreatePrototypeState();
             var topology = WorldMapGenerator.PopulateTiles(state);
@@ -76,36 +88,23 @@ namespace LittleCiv.Tests
                         continue;
                     }
 
-                    var ownIds = SideTileIds(topology.FindView(city.Id), direction);
-                    var neighborIds = SideTileIds(topology.FindView(neighbor.Id), (direction + 3) % 6);
-                    neighborIds.Reverse();
-                    Assert.That(ownIds, Is.EqualTo(neighborIds));
+                    var ownIds = topology.FindView(city.Id).Tiles.Select(tile => tile.TileId).ToList();
+                    var neighborIds = topology.FindView(neighbor.Id).Tiles.Select(tile => tile.TileId).ToList();
+                    Assert.That(ownIds.Intersect(neighborIds), Is.Empty);
+                    Assert.That(ownIds.Any(own => neighborIds.Any(other =>
+                        MapTraversal.AreAdjacent(state, own, other))), Is.True);
                 }
             }
         }
 
         [Test]
-        public void PrototypeMap_ThreeMutuallyAdjacentCitiesShareOneCornerTile()
+        public void PrototypeMap_HasNoNeutralOrThreeCitySharedTiles()
         {
             var state = CreatePrototypeState();
             var topology = WorldMapGenerator.PopulateTiles(state);
-            var triangles = FindCityTriangles(state);
-
-            Assert.That(triangles.Count, Is.GreaterThan(0));
-            foreach (var triangle in triangles)
-            {
-                var shared = topology.FindView(triangle[0].Id).Tiles.Select(tile => tile.TileId)
-                    .Intersect(topology.FindView(triangle[1].Id).Tiles.Select(tile => tile.TileId))
-                    .Intersect(topology.FindView(triangle[2].Id).Tiles.Select(tile => tile.TileId))
-                    .ToList();
-                Assert.That(shared.Count, Is.EqualTo(1));
-                var tile = state.Tiles.Single(item => item.Id == shared[0]);
-                Assert.That(tile.IsSharedBoundary, Is.True);
-                Assert.That(tile.VisibleCityIds.Count, Is.EqualTo(3));
-            }
-
-            Assert.That(state.Tiles.Where(tile => tile.IsSharedBoundary).Max(tile => tile.VisibleCityIds.Count),
-                Is.EqualTo(3));
+            Assert.That(topology.CityViews.SelectMany(view => view.Tiles)
+                .GroupBy(tile => tile.TileId).All(group => group.Count() == 1), Is.True);
+            Assert.That(state.Tiles.All(tile => !tile.IsSharedBoundary), Is.True);
         }
 
         [Test]
@@ -164,10 +163,10 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void SharedTileUnitSelection_ResolvesEveryConnectedCity()
+        public void OrdinaryTileVisibilityResolvesItsOwningCity()
         {
             var state = PrototypeMatchFactory.Create(1001);
-            var sharedTile = state.Tiles.First(tile => tile.VisibleCityIds.Count == 3);
+            var sharedTile = state.Tiles[0];
             var unit = state.Units[0];
             unit.TileId = sharedTile.Id;
 
@@ -176,7 +175,7 @@ namespace LittleCiv.Tests
                 unit.TileId,
                 state.Cities[0].Id);
 
-            Assert.That(visibleCities, Is.EqualTo(sharedTile.VisibleCityIds.OrderBy(id => id.Value).ToList()));
+            Assert.That(visibleCities, Is.EqualTo(new[] { sharedTile.CityId }));
         }
 
         private static GameState CreatePrototypeState()
