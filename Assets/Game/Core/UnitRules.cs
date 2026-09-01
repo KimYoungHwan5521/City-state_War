@@ -67,5 +67,59 @@ namespace LittleCiv.Core
                 default: throw new ArgumentOutOfRangeException(nameof(type));
             }
         }
+
+        public static int TrainingTurns(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia:
+                case UnitType.Supply: return 1;
+                case UnitType.IronInfantry: return 2;
+                case UnitType.GunpowderInfantry:
+                case UnitType.MotorizedSupply: return 3;
+                case UnitType.MechanizedInfantry: return 4;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        public static int TrainingGold(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia: return 3;
+                case UnitType.Supply: return 2;
+                case UnitType.IronInfantry: return 7;
+                case UnitType.GunpowderInfantry: return 12;
+                case UnitType.MechanizedInfantry: return 20;
+                case UnitType.MotorizedSupply: return 14;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        public static int FoodCapacity(UnitType type)
+        {
+            switch (type)
+            {
+                case UnitType.Militia:
+                case UnitType.IronInfantry:
+                case UnitType.GunpowderInfantry: return 6;
+                case UnitType.MechanizedInfantry: return 10;
+                case UnitType.Supply: return 20;
+                case UnitType.MotorizedSupply: return 40;
+                default: throw new ArgumentOutOfRangeException(nameof(type));
+            }
+        }
+
+        public static int FoodConsumption(UnitType type)
+        {
+            if (!Enum.IsDefined(typeof(UnitType), type))
+                throw new ArgumentOutOfRangeException(nameof(type));
+            return 1;
+        }
+
+        public static int RecoveryPerTurn(UnitType type)
+        {
+            return Math.Max(1, MaximumHitPoints(type) / 8);
+        }
     }
 }

@@ -31,18 +31,21 @@ namespace LittleCiv.Core
             {
                 Id = playerOne,
                 Slot = PlayerSlot.PlayerOne,
-                Gold = 10
+                Gold = 10,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
             });
             state.Players.Add(new PlayerState
             {
                 Id = playerTwo,
                 Slot = PlayerSlot.PlayerTwo,
-                Gold = 10
+                Gold = 10,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
             });
             state.Players.Add(new PlayerState
             {
                 Id = neutral,
-                Slot = PlayerSlot.Neutral
+                Slot = PlayerSlot.Neutral,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
             });
 
             for (var index = 0; index < CityCoordinates.Length; index++)

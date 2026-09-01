@@ -28,7 +28,10 @@ namespace LittleCiv.Core
                     Slot = item.Slot,
                     Gold = item.Gold,
                     StoredFood = item.StoredFood,
-                    ReserveTimeSeconds = item.ReserveTimeSeconds
+                    ReserveTimeSeconds = item.ReserveTimeSeconds,
+                    UnlockedUnitTypes = item.UnlockedUnitTypes == null
+                        ? new List<UnitType>()
+                        : new List<UnitType>(item.UnlockedUnitTypes)
                 });
             }
 
@@ -67,6 +70,8 @@ namespace LittleCiv.Core
                     R = item.R,
                     ControllerId = item.ControllerId,
                     GroundFood = item.GroundFood,
+                    GroundFoodOwnerId = item.GroundFoodOwnerId,
+                    GroundFoodReturnTurn = item.GroundFoodReturnTurn,
                     IsSharedBoundary = item.IsSharedBoundary,
                     DefenseBonusPercent = item.DefenseBonusPercent,
                     ResourceType = item.ResourceType,
@@ -111,6 +116,20 @@ namespace LittleCiv.Core
                     CitizenRemovalPriority = item.CitizenRemovalPriority,
                     MaintenancePriority = item.MaintenancePriority,
                     IsMaintenanceSuspended = item.IsMaintenanceSuspended
+                });
+            }
+
+            for (var i = 0; i < source.UnitTrainings.Count; i++)
+            {
+                var item = source.UnitTrainings[i];
+                result.UnitTrainings.Add(new UnitTrainingState
+                {
+                    Id = item.Id,
+                    DistrictId = item.DistrictId,
+                    OwnerId = item.OwnerId,
+                    Type = item.Type,
+                    RemainingTurns = item.RemainingTurns,
+                    IsAwaitingDeployment = item.IsAwaitingDeployment
                 });
             }
 

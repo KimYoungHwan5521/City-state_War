@@ -18,6 +18,8 @@ namespace LittleCiv.Core
         public readonly List<EntityId> DefenderFrontLine = new List<EntityId>();
         public readonly List<UnitDamageRecord> DamageRecords = new List<UnitDamageRecord>();
         public readonly List<EntityId> DestroyedUnitIds = new List<EntityId>();
+        public int DroppedFood;
+        public EntityId GroundFoodOwnerId;
         public bool AttackerAdvanced;
         public OccupationResult Occupation;
     }
@@ -32,6 +34,10 @@ namespace LittleCiv.Core
             if (attacker == null || attacker.OwnerId != request.AttackingPlayerId)
             {
                 throw new InvalidOperationException("The attacking unit is missing or has the wrong owner.");
+            }
+            if (attacker.CreatedTurn == state.TurnNumber)
+            {
+                throw new InvalidOperationException("A unit cannot attack on the turn its training completes.");
             }
 
             var result = new CombatResult
@@ -70,6 +76,7 @@ namespace LittleCiv.Core
             }
             ApplyDamage(attacker, attackerDamage, result);
 
+            result.DroppedFood = SumDestroyedFood(state, result.DestroyedUnitIds);
             RemoveDestroyed(state, result.DestroyedUnitIds);
             if (attacker.HitPoints > 0 && !HasEnemyOnTile(state, request.TargetTileId, attacker.OwnerId))
             {
@@ -78,6 +85,11 @@ namespace LittleCiv.Core
                 attacker.HasAutomaticDefense = false;
                 result.AttackerAdvanced = true;
                 result.Occupation = OccupationResolver.Resolve(state, attacker.OwnerId, request.TargetTileId);
+            }
+            if (result.DroppedFood > 0)
+            {
+                result.GroundFoodOwnerId = GroundFoodResolver.DepositAfterCombat(
+                    state, request.TargetTileId, result.DroppedFood);
             }
             return result;
         }
@@ -203,6 +215,14 @@ namespace LittleCiv.Core
         private static void RemoveDestroyed(GameState state, List<EntityId> destroyedIds)
         {
             state.Units.RemoveAll(item => destroyedIds.Contains(item.Id));
+        }
+
+        private static int SumDestroyedFood(GameState state, List<EntityId> destroyedIds)
+        {
+            var total = 0;
+            for (var index = 0; index < state.Units.Count; index++)
+                if (destroyedIds.Contains(state.Units[index].Id)) total += Math.Max(0, state.Units[index].CarriedFood);
+            return total;
         }
 
         private static UnitState FindUnit(GameState state, EntityId unitId)

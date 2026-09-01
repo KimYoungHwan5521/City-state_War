@@ -23,7 +23,20 @@ namespace LittleCiv.Core
         PopulationDecreased = 16,
         CitizenAssignmentRemoved = 17,
         UnitDisbanded = 18,
-        DistrictMaintenanceSuspended = 19
+        DistrictMaintenanceSuspended = 19,
+        UnitTrainingStarted = 20,
+        UnitTrainingCompleted = 21,
+        UnitDeploymentWaiting = 22,
+        UnitFoodLoaded = 23,
+        UnitFoodConsumed = 24,
+        UnitFoodTransferred = 25,
+        GroundFoodDropped = 26,
+        GroundFoodReturned = 27,
+        UnitRecovered = 28,
+        UnitStarvationStarted = 29,
+        UnitStarvationEnded = 30,
+        UnitStarvedToDeath = 31,
+        UnitPromoted = 32
     }
 
     [Serializable]

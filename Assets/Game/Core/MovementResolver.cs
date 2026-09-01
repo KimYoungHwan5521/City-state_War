@@ -14,7 +14,8 @@ namespace LittleCiv.Core
         EnemyOccupied = 6,
         TileCapacityReached = 7,
         PriorityLost = 8,
-        SwapConflict = 9
+        SwapConflict = 9,
+        TrainedThisTurn = 10
     }
 
     public sealed class MovementResult
@@ -40,6 +41,11 @@ namespace LittleCiv.Core
             if (unit.OwnerId != command.PlayerId)
             {
                 return Result(unit.Id, unit.TileId, 0, MovementStopReason.NotUnitOwner);
+            }
+
+            if (unit.CreatedTurn == state.TurnNumber)
+            {
+                return Result(unit.Id, unit.TileId, 0, MovementStopReason.TrainedThisTurn);
             }
 
             if (command.Path == null || command.Path.Count == 0)

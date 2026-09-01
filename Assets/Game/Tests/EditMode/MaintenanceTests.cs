@@ -18,6 +18,8 @@ namespace LittleCiv.Tests
 
             Assert.That(state.Units.Any(item => item.Id == supply.Id), Is.False);
             Assert.That(result.DisbandedUnits, Does.Contain(supply.Id));
+            Assert.That(result.DisbandedUnitRecords.Single().HomeCityId, Is.EqualTo(city.Id));
+            Assert.That(result.DisbandedUnitRecords.Single().ReturnedFood, Is.EqualTo(12));
             Assert.That(city.StoredFood, Is.EqualTo(12));
             Assert.That(city.Gold, Is.Zero);
         }
@@ -92,6 +94,49 @@ namespace LittleCiv.Tests
             new TurnProcessor().Resolve(state, new[] { command });
 
             Assert.That(unit.MaintenancePriority, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void RemoteUnitDisbandsToHomeWithoutCreatingGroundFood()
+        {
+            var state = PrototypeMatchFactory.Create(4805);
+            var city = state.Cities[0];
+            var enemyCity = state.Cities[1];
+            state.Units.RemoveAll(item => item.OwnerId == city.OwnerId);
+            city.Gold = 0;
+            var remoteTile = state.Tiles.First(item => item.CityId == enemyCity.Id);
+            remoteTile.GroundFood = 3;
+            var unit = AddUnit(state, city, UnitType.MechanizedInfantry, 8);
+            unit.TileId = remoteTile.Id;
+
+            var result = MaintenanceResolver.Resolve(state);
+
+            Assert.That(state.Units.Contains(unit), Is.False);
+            Assert.That(city.StoredFood, Is.EqualTo(8));
+            Assert.That(remoteTile.GroundFood, Is.EqualTo(3));
+            var record = result.DisbandedUnitRecords.Single(item => item.UnitId == unit.Id);
+            Assert.That(record.HomeCityId, Is.EqualTo(city.Id));
+            Assert.That(record.PreviousTileId, Is.EqualTo(remoteTile.Id));
+            Assert.That(record.ReturnedFood, Is.EqualTo(8));
+        }
+
+        [Test]
+        public void TurnProcessorDisbandEventIdentifiesHomeCityAndReturnedFood()
+        {
+            var state = PrototypeMatchFactory.Create(4806);
+            var city = state.Cities[0];
+            var enemyCity = state.Cities[1];
+            state.Units.RemoveAll(item => item.OwnerId == city.OwnerId);
+            city.Gold = 0;
+            var unit = AddUnit(state, city, UnitType.MechanizedInfantry, 8);
+            unit.TileId = state.Tiles.First(item => item.CityId == enemyCity.Id).Id;
+
+            var resolution = new TurnProcessor().Resolve(state, new GameCommand[0]);
+
+            Assert.That(state.Units.Contains(unit), Is.False);
+            Assert.That(city.StoredFood, Is.EqualTo(8));
+            Assert.That(resolution.Events.Any(item => item.Type == GameEventType.UnitDisbanded &&
+                item.SourceId == unit.Id && item.TargetId == city.Id && item.PrimaryValue == 8), Is.True);
         }
 
         private static UnitState AddUnit(GameState state, CityState city, UnitType type, int food)

@@ -1,0 +1,97 @@
+using System;
+
+namespace LittleCiv.Core
+{
+    public sealed class UnitPromotionResult
+    {
+        public EntityId UnitId;
+        public EntityId HomeCityId;
+        public UnitType PreviousType;
+        public UnitType PromotedType;
+        public int GoldCost;
+    }
+
+    public static class UnitPromotionResolver
+    {
+        public static bool TryPromote(
+            GameState state, GameCommand command, out UnitPromotionResult result)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (command == null) throw new ArgumentNullException(nameof(command));
+            result = null;
+            if (!Enum.IsDefined(typeof(UnitType), command.PrimaryValue)) return false;
+            var unit = FindUnit(state, command.SubjectId);
+            var player = FindPlayer(state, command.PlayerId);
+            if (unit == null || player == null || unit.OwnerId != command.PlayerId ||
+                unit.RemainingMovement <= 0) return false;
+            var promotedType = (UnitType)command.PrimaryValue;
+            if (!IsNextType(unit.Type, promotedType) || player.UnlockedUnitTypes == null ||
+                !player.UnlockedUnitTypes.Contains(promotedType)) return false;
+
+            var tile = FindTile(state, unit.TileId);
+            var city = tile == null ? null : FindCity(state, tile.CityId);
+            if (tile == null || city == null || tile.IsSharedBoundary ||
+                tile.ControllerId != command.PlayerId || city.OwnerId != command.PlayerId) return false;
+            var cost = UnitRules.TrainingGold(promotedType) - UnitRules.TrainingGold(unit.Type);
+            if (cost < 0 || city.Gold < cost) return false;
+
+            var previousType = unit.Type;
+            var previousMaximum = UnitRules.MaximumHitPoints(previousType);
+            var promotedMaximum = UnitRules.MaximumHitPoints(promotedType);
+            unit.HitPoints = Math.Max(1, (unit.HitPoints * promotedMaximum) / previousMaximum);
+            unit.Type = promotedType;
+            unit.RemainingMovement = 0;
+            unit.HasAutomaticDefense = false;
+            city.Gold -= cost;
+            result = new UnitPromotionResult
+            {
+                UnitId = unit.Id,
+                HomeCityId = city.Id,
+                PreviousType = previousType,
+                PromotedType = promotedType,
+                GoldCost = cost
+            };
+            return true;
+        }
+
+        private static bool IsNextType(UnitType current, UnitType target)
+        {
+            switch (current)
+            {
+                case UnitType.Militia: return target == UnitType.IronInfantry;
+                case UnitType.IronInfantry: return target == UnitType.GunpowderInfantry;
+                case UnitType.GunpowderInfantry: return target == UnitType.MechanizedInfantry;
+                case UnitType.Supply: return target == UnitType.MotorizedSupply;
+                default: return false;
+            }
+        }
+
+        private static UnitState FindUnit(GameState state, EntityId id)
+        {
+            for (var index = 0; index < state.Units.Count; index++)
+                if (state.Units[index].Id == id) return state.Units[index];
+            return null;
+        }
+
+        private static PlayerState FindPlayer(GameState state, EntityId id)
+        {
+            for (var index = 0; index < state.Players.Count; index++)
+                if (state.Players[index].Id == id) return state.Players[index];
+            return null;
+        }
+
+        private static TileState FindTile(GameState state, EntityId id)
+        {
+            for (var index = 0; index < state.Tiles.Count; index++)
+                if (state.Tiles[index].Id == id) return state.Tiles[index];
+            return null;
+        }
+
+        private static CityState FindCity(GameState state, EntityId id)
+        {
+            for (var index = 0; index < state.Cities.Count; index++)
+                if (state.Cities[index].Id == id) return state.Cities[index];
+            return null;
+        }
+    }
+}

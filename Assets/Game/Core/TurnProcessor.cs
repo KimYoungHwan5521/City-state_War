@@ -74,10 +74,13 @@ namespace LittleCiv.Core
                     var maintenance = MaintenanceResolver.Resolve(state);
                     for (var unitIndex = 0; unitIndex < maintenance.DisbandedUnits.Count; unitIndex++)
                     {
+                        var disbanded = maintenance.DisbandedUnitRecords[unitIndex];
                         resolution.Events.Add(CreateEvent(
                             turnNumber,
                             GameEventType.UnitDisbanded,
-                            maintenance.DisbandedUnits[unitIndex]));
+                            disbanded.UnitId,
+                            disbanded.HomeCityId,
+                            disbanded.ReturnedFood));
                     }
                     for (var districtIndex = 0; districtIndex < maintenance.SuspendedDistricts.Count; districtIndex++)
                     {
@@ -97,9 +100,91 @@ namespace LittleCiv.Core
                             GameEventType.DistrictConstructionCompleted,
                             completedDistricts[completedIndex]));
                     }
+                    var trainingAdvance = UnitTrainingResolver.Advance(state);
+                    for (var unitIndex = 0; unitIndex < trainingAdvance.CompletedUnitIds.Count; unitIndex++)
+                    {
+                        var completedUnit = FindUnit(state, trainingAdvance.CompletedUnitIds[unitIndex]);
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitTrainingCompleted,
+                            completedUnit.Id,
+                            completedUnit.TileId,
+                            (int)completedUnit.Type));
+                    }
+                    for (var waitingIndex = 0; waitingIndex < trainingAdvance.WaitingTrainingIds.Count; waitingIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitDeploymentWaiting,
+                            trainingAdvance.WaitingTrainingIds[waitingIndex]));
+                    }
                 }
                 if (phase == TurnPhase.FoodRecoveryStarvation)
                 {
+                    var returnedFood = GroundFoodResolver.ReturnEligibleFood(state);
+                    for (var returnIndex = 0; returnIndex < returnedFood.Count; returnIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.GroundFoodReturned,
+                            returnedFood[returnIndex].TileId,
+                            returnedFood[returnIndex].CityId,
+                            returnedFood[returnIndex].Amount));
+                    }
+                    var foodConsumption = UnitFoodResolver.Consume(state);
+                    for (var foodIndex = 0; foodIndex < foodConsumption.SuppliedUnitIds.Count; foodIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitFoodConsumed,
+                            foodConsumption.SuppliedUnitIds[foodIndex],
+                            primaryValue: foodConsumption.Records[foodIndex].Amount,
+                            secondaryValue: (int)foodConsumption.Records[foodIndex].Source));
+                    }
+                    var recoveries = UnitRecoveryResolver.Resolve(state, foodConsumption.SuppliedUnitIds);
+                    for (var recoveryIndex = 0; recoveryIndex < recoveries.Count; recoveryIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitRecovered,
+                            recoveries[recoveryIndex].UnitId,
+                            primaryValue: recoveries[recoveryIndex].RecoveredHitPoints));
+                    }
+                    var starvation = UnitStarvationResolver.ResolveFirstFailure(
+                        state,
+                        foodConsumption.SuppliedUnitIds,
+                        foodConsumption.UnsuppliedUnitIds);
+                    for (var starvationIndex = 0;
+                         starvationIndex < starvation.EnteredStarvationUnitIds.Count;
+                         starvationIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitStarvationStarted,
+                            starvation.EnteredStarvationUnitIds[starvationIndex]));
+                    }
+                    for (var starvationIndex = 0;
+                         starvationIndex < starvation.RecoveredFromStarvationUnitIds.Count;
+                         starvationIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitStarvationEnded,
+                            starvation.RecoveredFromStarvationUnitIds[starvationIndex]));
+                    }
+                    for (var starvationIndex = 0;
+                         starvationIndex < starvation.StarvedToDeathUnitIds.Count;
+                         starvationIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitStarvedToDeath,
+                            starvation.StarvedToDeathUnitIds[starvationIndex]));
+                        resolution.Events.Add(CreateEvent(
+                            turnNumber,
+                            GameEventType.UnitDestroyed,
+                            starvation.StarvedToDeathUnitIds[starvationIndex]));
+                    }
                     CityFoodResolver.ResolveStorage(state);
                 }
                 if (phase == TurnPhase.Population)
@@ -196,6 +281,10 @@ namespace LittleCiv.Core
 
                 var validation = CommandValidator.ValidateEnvelope(state, command);
                 DistrictState startedDistrict = null;
+                UnitTrainingState startedTraining = null;
+                var loadedFood = 0;
+                var transferredFood = 0;
+                UnitPromotionResult promotion = null;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
@@ -207,6 +296,30 @@ namespace LittleCiv.Core
                 }
                 if (accepted && command.Type == GameCommandType.SetPriority &&
                     !TrySetPriority(state, command))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.StartTraining &&
+                    !UnitTrainingResolver.TryStart(state, command, out startedTraining))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.LoadFood &&
+                    !UnitFoodResolver.TryLoad(state, command, out loadedFood))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.TransferFood &&
+                    !UnitFoodResolver.TryTransfer(state, command, out transferredFood))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.PromoteUnit &&
+                    !UnitPromotionResolver.TryPromote(state, command, out promotion))
                 {
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
@@ -230,6 +343,44 @@ namespace LittleCiv.Core
                             startedDistrict.Id,
                             (int)startedDistrict.Type,
                             startedDistrict.RemainingConstructionTurns));
+                    }
+                    if (startedTraining != null)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.UnitTrainingStarted,
+                            startedTraining.DistrictId,
+                            startedTraining.Id,
+                            (int)startedTraining.Type,
+                            startedTraining.RemainingTurns));
+                    }
+                    if (loadedFood > 0)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.UnitFoodLoaded,
+                            command.SubjectId,
+                            command.TargetId,
+                            loadedFood));
+                    }
+                    if (transferredFood > 0)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.UnitFoodTransferred,
+                            command.SubjectId,
+                            command.TargetId,
+                            transferredFood));
+                    }
+                    if (promotion != null)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.UnitPromoted,
+                            promotion.UnitId,
+                            promotion.HomeCityId,
+                            (int)promotion.PromotedType,
+                            promotion.GoldCost));
                     }
                 }
             }
@@ -432,7 +583,8 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                if (unit.RemainingMovement <= 0 || blockedUnits.Contains(unit.Id)) continue;
+                if (unit.CreatedTurn == state.TurnNumber || unit.RemainingMovement <= 0 ||
+                    blockedUnits.Contains(unit.Id)) continue;
                 var tile = FindTile(state, unit.TileId);
                 if (tile != null && tile.IsSharedBoundary) continue;
                 unit.HasAutomaticDefense = true;

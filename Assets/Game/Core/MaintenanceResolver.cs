@@ -6,7 +6,16 @@ namespace LittleCiv.Core
     public sealed class MaintenanceResolution
     {
         public readonly List<EntityId> DisbandedUnits = new List<EntityId>();
+        public readonly List<DisbandedUnitRecord> DisbandedUnitRecords = new List<DisbandedUnitRecord>();
         public readonly List<EntityId> SuspendedDistricts = new List<EntityId>();
+    }
+
+    public sealed class DisbandedUnitRecord
+    {
+        public EntityId UnitId;
+        public EntityId HomeCityId;
+        public EntityId PreviousTileId;
+        public int ReturnedFood;
     }
 
     public static class MaintenanceResolver
@@ -56,6 +65,13 @@ namespace LittleCiv.Core
                 city.StoredFood += unit.CarriedFood;
                 state.Units.Remove(unit);
                 result.DisbandedUnits.Add(unit.Id);
+                result.DisbandedUnitRecords.Add(new DisbandedUnitRecord
+                {
+                    UnitId = unit.Id,
+                    HomeCityId = city.Id,
+                    PreviousTileId = unit.TileId,
+                    ReturnedFood = unit.CarriedFood
+                });
             }
             city.Gold -= unitCost;
 

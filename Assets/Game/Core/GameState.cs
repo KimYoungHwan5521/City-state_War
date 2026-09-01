@@ -52,7 +52,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 9;
+        public const int CurrentSchemaVersion = 12;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -65,6 +65,7 @@ namespace LittleCiv.Core
         public List<TileState> Tiles = new List<TileState>();
         public List<UnitState> Units = new List<UnitState>();
         public List<DistrictState> Districts = new List<DistrictState>();
+        public List<UnitTrainingState> UnitTrainings = new List<UnitTrainingState>();
         public WorldMapTopology MapTopology = new WorldMapTopology();
 
         public static GameState CreateNew(long matchSeed)
@@ -98,6 +99,7 @@ namespace LittleCiv.Core
         public int Gold;
         public int StoredFood;
         public int ReserveTimeSeconds = 180;
+        public List<UnitType> UnlockedUnitTypes = new List<UnitType>();
     }
 
     [Serializable]
@@ -130,6 +132,8 @@ namespace LittleCiv.Core
         public int R;
         public EntityId ControllerId;
         public int GroundFood;
+        public EntityId GroundFoodOwnerId;
+        public int GroundFoodReturnTurn;
         public bool IsSharedBoundary;
         public int DefenseBonusPercent;
         public TileResourceType ResourceType;
@@ -166,5 +170,16 @@ namespace LittleCiv.Core
         public int CitizenRemovalPriority;
         public int MaintenancePriority;
         public bool IsMaintenanceSuspended;
+    }
+
+    [Serializable]
+    public sealed class UnitTrainingState
+    {
+        public EntityId Id;
+        public EntityId DistrictId;
+        public EntityId OwnerId;
+        public UnitType Type;
+        public int RemainingTurns;
+        public bool IsAwaitingDeployment;
     }
 }

@@ -15,7 +15,9 @@ namespace LittleCiv.Core
         Trade = 7,
         LevyBid = 8,
         SetPriority = 9,
-        ConfirmTurn = 10
+        ConfirmTurn = 10,
+        TransferFood = 11,
+        PromoteUnit = 12
     }
 
     [Serializable]

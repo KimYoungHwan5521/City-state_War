@@ -28,6 +28,7 @@ namespace LittleCiv.Core
             HashTiles(ref hash, state.Tiles);
             HashUnits(ref hash, state.Units);
             HashDistricts(ref hash, state.Districts);
+            HashUnitTrainings(ref hash, state.UnitTrainings);
             HashMapTopology(ref hash, state.MapTopology);
             return hash;
         }
@@ -43,6 +44,13 @@ namespace LittleCiv.Core
                 Add(ref hash, item.Gold);
                 Add(ref hash, item.StoredFood);
                 Add(ref hash, item.ReserveTimeSeconds);
+                var unlockedUnits = item.UnlockedUnitTypes == null
+                    ? new List<UnitType>()
+                    : new List<UnitType>(item.UnlockedUnitTypes);
+                unlockedUnits.Sort();
+                Add(ref hash, unlockedUnits.Count);
+                for (var unlockedIndex = 0; unlockedIndex < unlockedUnits.Count; unlockedIndex++)
+                    Add(ref hash, (int)unlockedUnits[unlockedIndex]);
             }
         }
 
@@ -83,6 +91,8 @@ namespace LittleCiv.Core
                 Add(ref hash, item.R);
                 Add(ref hash, item.ControllerId.Value);
                 Add(ref hash, item.GroundFood);
+                Add(ref hash, item.GroundFoodOwnerId.Value);
+                Add(ref hash, item.GroundFoodReturnTurn);
                 Add(ref hash, item.IsSharedBoundary ? 1 : 0);
                 Add(ref hash, item.DefenseBonusPercent);
                 Add(ref hash, (int)item.ResourceType);
@@ -135,6 +145,21 @@ namespace LittleCiv.Core
                 Add(ref hash, item.CitizenRemovalPriority);
                 Add(ref hash, item.MaintenancePriority);
                 Add(ref hash, item.IsMaintenanceSuspended ? 1 : 0);
+            }
+        }
+
+        private static void HashUnitTrainings(ref ulong hash, List<UnitTrainingState> source)
+        {
+            var items = SortedCopy(source, item => item.Id.Value);
+            Add(ref hash, items.Count);
+            foreach (var item in items)
+            {
+                Add(ref hash, item.Id.Value);
+                Add(ref hash, item.DistrictId.Value);
+                Add(ref hash, item.OwnerId.Value);
+                Add(ref hash, (int)item.Type);
+                Add(ref hash, item.RemainingTurns);
+                Add(ref hash, item.IsAwaitingDeployment ? 1 : 0);
             }
         }
 
