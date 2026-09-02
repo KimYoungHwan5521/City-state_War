@@ -240,6 +240,21 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void CulturePillageUsesExistingProgressAndCanConvertCitizen()
+        {
+            var fixture = CreateFixture(DistrictType.Culture, includeDefender: false);
+            var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
+            var influence = CityCultureRules.GetOrCreate(victimCity, fixture.AttackerPlayer);
+            influence.ConversionProgress = 8;
+
+            OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+
+            Assert.That(influence.PreferredCitizens, Is.EqualTo(1));
+            Assert.That(influence.ConversionProgress, Is.EqualTo(2));
+            Assert.That(CityCultureRules.NativeCitizens(victimCity), Is.EqualTo(3));
+        }
+
+        [Test]
         public void RewardCannotRepeatUntilRepairCompletes()
         {
             var fixture = CreateFixture(DistrictType.Commerce, includeDefender: false);

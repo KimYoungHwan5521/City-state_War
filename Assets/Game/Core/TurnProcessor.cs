@@ -240,6 +240,7 @@ namespace LittleCiv.Core
                     for (var diminishedIndex = 0; diminishedIndex < diminishedCities.Count; diminishedIndex++)
                     {
                         var diminishedCity = FindCity(state, diminishedCities[diminishedIndex]);
+                        CityCultureRules.Normalize(diminishedCity);
                         var removedDistrictId = CitizenAssignmentResolver.RemoveExcessCitizen(state, diminishedCity);
                         resolution.Events.Add(CreateEvent(
                             turnNumber,
@@ -257,6 +258,30 @@ namespace LittleCiv.Core
                                 removedDistrictId));
                         }
                     }
+                }
+                if (phase == TurnPhase.CultureAndConversion)
+                {
+                    var cultureChanges = CultureConversionResolver.AdvancePlayerCities(state);
+                    for (var cultureIndex = 0; cultureIndex < cultureChanges.Count; cultureIndex++)
+                    {
+                        var change = cultureChanges[cultureIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.CultureInfluenceChanged,
+                            change.CultureOwnerId, change.CityId,
+                            change.PreferredCitizenDelta,
+                            change.ConversionProgress - change.ReversionProgress));
+                    }
+                    var neutralCulture = NeutralCultureResolver.Advance(state);
+                    for (var neutralIndex = 0; neutralIndex < neutralCulture.Count; neutralIndex++)
+                    {
+                        var change = neutralCulture[neutralIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.NeutralCultureResolved,
+                            change.WinningCultureId, change.CityId,
+                            change.AppliedInfluence,
+                            change.SubjectToId.IsValid ? 1 : 0));
+                    }
+                    CultureVictoryConditionResolver.UpdateCandidates(state);
                 }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 

@@ -50,7 +50,9 @@ namespace LittleCiv.Core
         ResearchCompleted = 43,
         NuclearProjectStarted = 44,
         NuclearProjectProgressed = 45,
-        NuclearProjectCompleted = 46
+        NuclearProjectCompleted = 46,
+        CultureInfluenceChanged = 47,
+        NeutralCultureResolved = 48
     }
 
     [Serializable]

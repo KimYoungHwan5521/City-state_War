@@ -1334,7 +1334,7 @@ namespace LittleCiv.Runtime
 
             var city = state.Cities[focusedCityIndex];
             var economy = CityEconomyResolver.CalculateBreakdown(state, city);
-            GUI.Box(new Rect(16f, 16f, 410f, 425f), string.Empty);
+            GUI.Box(new Rect(16f, 16f, 410f, 505f), string.Empty);
             GUI.Label(new Rect(28f, 25f, 360f, 22f), $"City {city.Name}  World ({city.WorldQ}, {city.WorldR})");
             GUI.Label(new Rect(28f, 47f, 360f, 22f),
                 $"Population {city.Population} | Gold {city.Gold} | Stored food {city.StoredFood}");
@@ -1347,29 +1347,72 @@ namespace LittleCiv.Runtime
                 $"Upkeep: units -{economy.UnitUpkeep}, facilities -{economy.FacilityUpkeep}");
             DrawYieldRow(28f, 163f, "Science", economy.Science);
             DrawYieldRow(28f, 187f, "Culture", economy.Culture);
-            GUI.Label(new Rect(28f, 214f, 360f, 20f),
+            DrawCultureStatus(city, 28f, 212f);
+            GUI.Label(new Rect(28f, 290f, 360f, 20f),
                 $"Growth {city.GrowthProgress}/{economy.GrowthRequired} | Famine {city.FamineProgress}/{economy.FamineRequired}");
             var active = FindPlayer(activePlayerId);
             var reCommandCount = state.Units.Count(item =>
                 item.OwnerId == activePlayerId && item.ManeuverRecommandTurn == state.TurnNumber);
-            GUI.Label(new Rect(28f, 241f, 380f, 20f),
+            GUI.Label(new Rect(28f, 317f, 380f, 20f),
                 reCommandCount > 0
                     ? $"RE-COMMAND TURN | {active.Slot} | Units {reCommandCount} | Planned {simulator.Planning.GetOwnCommands(activePlayerId).Count}"
                     : $"NORMAL TURN {state.TurnNumber} | {active.Slot} | Planned {simulator.Planning.GetOwnCommands(activePlayerId).Count}");
-            GUI.Label(new Rect(28f, 263f, 380f, 40f), statusMessage);
+            GUI.Label(new Rect(28f, 339f, 380f, 40f), statusMessage);
             GUI.enabled = !state.IsGameOver;
-            if (GUI.Button(new Rect(28f, 307f, 170f, 30f), "Cancel selected route")) CancelSelectedMove();
-            if (GUI.Button(new Rect(210f, 307f, 198f, 30f), "Confirm player turn")) ConfirmActivePlayer();
+            if (GUI.Button(new Rect(28f, 383f, 170f, 30f), "Cancel selected route")) CancelSelectedMove();
+            if (GUI.Button(new Rect(210f, 383f, 198f, 30f), "Confirm player turn")) ConfirmActivePlayer();
             GUI.enabled = true;
-            if (GUI.Button(new Rect(28f, 342f, 380f, 30f),
+            if (GUI.Button(new Rect(28f, 418f, 380f, 30f),
                 showResearchPanel ? "Close research" : "Open research"))
                 showResearchPanel = !showResearchPanel;
-            GUI.Label(new Rect(28f, 377f, 380f, 20f), "Left: select | Right: move | WASD: pan | Wheel: zoom");
-            if (turnLog.Count > 0) GUI.Label(new Rect(28f, 401f, 380f, 20f), turnLog[0]);
+            GUI.Label(new Rect(28f, 453f, 380f, 20f), "Left: select | Right: move | WASD: pan | Wheel: zoom");
+            if (turnLog.Count > 0) GUI.Label(new Rect(28f, 477f, 380f, 20f), turnLog[0]);
             DrawSelectedTilePanel();
             if (showResearchPanel) DrawResearchPanel();
             DrawCombatLog();
             GUI.matrix = previousGuiMatrix;
+        }
+
+        private void DrawCultureStatus(CityState city, float x, float y)
+        {
+            var native = CityCultureRules.NativeCitizens(city);
+            var one = state.Players.Find(item => item.Slot == PlayerSlot.PlayerOne);
+            var two = state.Players.Find(item => item.Slot == PlayerSlot.PlayerTwo);
+            var oneCitizens = one == null ? 0 : CityCultureRules.PreferredCitizens(city, one.Id);
+            var twoCitizens = two == null ? 0 : CityCultureRules.PreferredCitizens(city, two.Id);
+            GUI.Label(new Rect(x, y, 380f, 20f),
+                $"Culture citizens: native {native} | P1 {oneCitizens} | P2 {twoCitizens}");
+
+            var progress = new List<string>();
+            AddCultureProgress(progress, city, one);
+            AddCultureProgress(progress, city, two);
+            GUI.Label(new Rect(x, y + 22f, 380f, 20f),
+                progress.Count == 0 ? "Culture progress: none" : $"Culture progress: {string.Join(" | ", progress)}");
+
+            var owner = FindPlayer(city.OwnerId);
+            if (owner != null && owner.Slot == PlayerSlot.Neutral)
+            {
+                var subject = city.CultureSubjectToId.IsValid ? FindPlayer(city.CultureSubjectToId)?.Slot.ToString() : "none";
+                GUI.Label(new Rect(x, y + 44f, 380f, 20f),
+                    $"Neutral resistance {NeutralCultureResolver.Resistance(state, city)} | Subject to: {subject}");
+                return;
+            }
+            var foreign = owner != null && owner.Slot == PlayerSlot.PlayerOne ? twoCitizens : oneCitizens;
+            var defeatAt = (city.Population / 2) + 1;
+            GUI.Label(new Rect(x, y + 44f, 380f, 20f),
+                foreign >= defeatAt
+                    ? $"CULTURE DEFEAT: foreign citizens {foreign}/{defeatAt}"
+                    : $"Culture safety: foreign {foreign}/{defeatAt} | {defeatAt - foreign} more causes defeat");
+        }
+
+        private static void AddCultureProgress(List<string> output, CityState city, PlayerState player)
+        {
+            if (player == null || player.Id == city.OwnerId || city.CultureInfluences == null) return;
+            var influence = city.CultureInfluences.Find(item => item.CultureOwnerId == player.Id);
+            if (influence == null || (influence.ConversionProgress <= 0 && influence.ReversionProgress <= 0)) return;
+            output.Add(influence.ReversionProgress > 0
+                ? $"{player.Slot} return in {10 - influence.ReversionProgress}"
+                : $"{player.Slot} convert in {10 - influence.ConversionProgress}");
         }
 
         private Rect ResearchPanelRect()
@@ -1443,7 +1486,7 @@ namespace LittleCiv.Runtime
             if (combatLog.Count == 0) return;
             var logicalHeight = Screen.height / UiScale;
             var height = 34f + (Mathf.Min(6, combatLog.Count) * 22f);
-            var y = Mathf.Max(416f, logicalHeight - height - 16f);
+            var y = Mathf.Max(526f, logicalHeight - height - 16f);
             GUI.Box(new Rect(16f, y, 700f, height), string.Empty);
             GUI.Label(new Rect(28f, y + 8f, 660f, 22f), "COMBAT / MOVEMENT LOG");
             for (var index = 0; index < combatLog.Count && index < 6; index++)
@@ -1499,7 +1542,7 @@ namespace LittleCiv.Runtime
             var logicalWidth = Screen.width / UiScale;
             var compact = logicalWidth < 900f;
             var x = compact ? 16f : logicalWidth - 430f;
-            var yOffset = compact ? 416f : 16f;
+            var yOffset = compact ? 526f : 16f;
             GUI.Box(new Rect(x, yOffset, 414f, 600f), string.Empty);
             var selectedTile = state.Tiles.Find(item => item.Id == selectedTileId);
             var groundFoodInfo = selectedTile != null && selectedTile.GroundFood > 0

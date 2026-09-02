@@ -11,7 +11,10 @@ namespace LittleCiv.Tests
         public void CultureBeatsScienceAndConquestWhenAllQualifyInSameTurn()
         {
             var fixture = CreateConquestTurn();
-            fixture.PlayerOne.HasMetCultureVictoryCondition = true;
+            var culturallyDefeatedCity = fixture.State.Cities.Single(item =>
+                item.OwnerId == fixture.PlayerTwo.Id);
+            CityCultureRules.GetOrCreate(culturallyDefeatedCity, fixture.PlayerOne.Id)
+                .PreferredCitizens = 1;
             fixture.PlayerTwo.HasCompletedNuclearProject = true;
 
             var result = new TurnProcessor().Resolve(fixture.State, new[] { fixture.ConquestCommand });

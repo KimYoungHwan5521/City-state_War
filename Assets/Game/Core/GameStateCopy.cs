@@ -69,6 +69,7 @@ namespace LittleCiv.Core
                     LastGoldProduction = item.LastGoldProduction,
                     LastScienceProduction = item.LastScienceProduction,
                     LastCultureProduction = item.LastCultureProduction,
+                    CultureSubjectToId = item.CultureSubjectToId,
                     CultureInfluences = CloneCultureInfluences(item.CultureInfluences)
                 });
             }
@@ -188,7 +189,9 @@ namespace LittleCiv.Core
                 result.Add(new CultureInfluenceState
                 {
                     CultureOwnerId = source[i].CultureOwnerId,
-                    ConversionProgress = source[i].ConversionProgress
+                    PreferredCitizens = source[i].PreferredCitizens,
+                    ConversionProgress = source[i].ConversionProgress,
+                    ReversionProgress = source[i].ReversionProgress
                 });
             }
             return result;

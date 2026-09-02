@@ -108,6 +108,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.LastGoldProduction);
                 Add(ref hash, item.LastScienceProduction);
                 Add(ref hash, item.LastCultureProduction);
+                Add(ref hash, item.CultureSubjectToId.Value);
                 var influences = item.CultureInfluences == null
                     ? new List<CultureInfluenceState>()
                     : new List<CultureInfluenceState>(item.CultureInfluences);
@@ -116,7 +117,9 @@ namespace LittleCiv.Core
                 foreach (var influence in influences)
                 {
                     Add(ref hash, influence.CultureOwnerId.Value);
+                    Add(ref hash, influence.PreferredCitizens);
                     Add(ref hash, influence.ConversionProgress);
+                    Add(ref hash, influence.ReversionProgress);
                 }
             }
         }

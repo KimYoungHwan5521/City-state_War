@@ -153,14 +153,7 @@ namespace LittleCiv.Core
 
         private static void AddCultureInfluence(CityState city, EntityId cultureOwnerId, int amount)
         {
-            if (city.CultureInfluences == null) city.CultureInfluences = new List<CultureInfluenceState>();
-            var influence = city.CultureInfluences.Find(item => item.CultureOwnerId == cultureOwnerId);
-            if (influence == null)
-            {
-                influence = new CultureInfluenceState { CultureOwnerId = cultureOwnerId };
-                city.CultureInfluences.Add(influence);
-            }
-            influence.ConversionProgress += amount;
+            CultureConversionResolver.ApplyForeignInfluence(city, cultureOwnerId, amount);
         }
 
         private static DistrictState FindDistrict(GameState state, EntityId tileId)
