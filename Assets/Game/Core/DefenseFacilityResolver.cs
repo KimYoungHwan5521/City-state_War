@@ -15,6 +15,9 @@ namespace LittleCiv.Core
             if (!Enum.IsDefined(typeof(DefenseFacilityType), command.PrimaryValue)) return false;
             var targetType = (DefenseFacilityType)command.PrimaryValue;
             if (targetType == DefenseFacilityType.None) return false;
+            var player = state.Players.Find(item => item.Id == command.PlayerId);
+            if (player == null || (player.ResearchUnlocksEnabled &&
+                !player.UnlockedDefenseTypes.Contains(targetType))) return false;
             var city = FindCity(state, command.SubjectId);
             var tile = FindTile(state, command.TargetId);
             if (city == null || tile == null || city.OwnerId != command.PlayerId ||

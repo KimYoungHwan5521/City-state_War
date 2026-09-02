@@ -31,7 +31,19 @@ namespace LittleCiv.Core
                     ReserveTimeSeconds = item.ReserveTimeSeconds,
                     UnlockedUnitTypes = item.UnlockedUnitTypes == null
                         ? new List<UnitType>()
-                        : new List<UnitType>(item.UnlockedUnitTypes)
+                        : new List<UnitType>(item.UnlockedUnitTypes),
+                    UnlockedDistrictTypes = item.UnlockedDistrictTypes == null
+                        ? new List<DistrictType>() : new List<DistrictType>(item.UnlockedDistrictTypes),
+                    UnlockedDefenseTypes = item.UnlockedDefenseTypes == null
+                        ? new List<DefenseFacilityType>() : new List<DefenseFacilityType>(item.UnlockedDefenseTypes),
+                    CurrentResearch = item.CurrentResearch,
+                    CompletedResearch = item.CompletedResearch == null
+                        ? new List<ResearchType>() : new List<ResearchType>(item.CompletedResearch),
+                    ResearchProgress = CloneResearchProgress(item.ResearchProgress),
+                    FoodCapacityPercent = item.FoodCapacityPercent,
+                    ResearchUnlocksEnabled = item.ResearchUnlocksEnabled,
+                    HasCompletedNuclearProject = item.HasCompletedNuclearProject,
+                    HasMetCultureVictoryCondition = item.HasMetCultureVictoryCondition
                 });
             }
 
@@ -154,6 +166,15 @@ namespace LittleCiv.Core
                     RemainingReactivationTurns = item.RemainingReactivationTurns
                 });
             }
+            for (var i = 0; i < source.NuclearProjects.Count; i++)
+            {
+                var item = source.NuclearProjects[i];
+                result.NuclearProjects.Add(new NuclearProjectState
+                {
+                    Id = item.Id, DistrictId = item.DistrictId, OwnerId = item.OwnerId,
+                    RemainingTurns = item.RemainingTurns, IsCompleted = item.IsCompleted
+                });
+            }
 
             return result;
         }
@@ -170,6 +191,15 @@ namespace LittleCiv.Core
                     ConversionProgress = source[i].ConversionProgress
                 });
             }
+            return result;
+        }
+
+        private static List<ResearchProgressState> CloneResearchProgress(List<ResearchProgressState> source)
+        {
+            var result = new List<ResearchProgressState>();
+            if (source == null) return result;
+            for (var i = 0; i < source.Count; i++)
+                result.Add(new ResearchProgressState { Type = source[i].Type, Progress = source[i].Progress });
             return result;
         }
 

@@ -32,20 +32,26 @@ namespace LittleCiv.Core
                 Id = playerOne,
                 Slot = PlayerSlot.PlayerOne,
                 Gold = 10,
-                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
+                ResearchUnlocksEnabled = true,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply },
+                UnlockedDistrictTypes = { DistrictType.Agriculture, DistrictType.Commerce, DistrictType.Military }
             });
             state.Players.Add(new PlayerState
             {
                 Id = playerTwo,
                 Slot = PlayerSlot.PlayerTwo,
                 Gold = 10,
-                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
+                ResearchUnlocksEnabled = true,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply },
+                UnlockedDistrictTypes = { DistrictType.Agriculture, DistrictType.Commerce, DistrictType.Military }
             });
             state.Players.Add(new PlayerState
             {
                 Id = neutral,
                 Slot = PlayerSlot.Neutral,
-                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply }
+                ResearchUnlocksEnabled = true,
+                UnlockedUnitTypes = { UnitType.Militia, UnitType.Supply },
+                UnlockedDistrictTypes = { DistrictType.Agriculture, DistrictType.Commerce, DistrictType.Military }
             });
 
             for (var index = 0; index < CityCoordinates.Length; index++)

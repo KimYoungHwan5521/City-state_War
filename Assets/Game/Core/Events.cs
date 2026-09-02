@@ -44,7 +44,13 @@ namespace LittleCiv.Core
         ModernDefenseDeactivated = 37,
         ModernDefenseReactivationStarted = 38,
         ModernDefenseReactivated = 39,
-        DistrictPillaged = 40
+        DistrictPillaged = 40,
+        ResearchSelected = 41,
+        ResearchProgressed = 42,
+        ResearchCompleted = 43,
+        NuclearProjectStarted = 44,
+        NuclearProjectProgressed = 45,
+        NuclearProjectCompleted = 46
     }
 
     [Serializable]

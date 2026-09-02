@@ -20,7 +20,8 @@ namespace LittleCiv.Core
         PromoteUnit = 12,
         RepairDistrict = 13,
         StartDefenseFacility = 14,
-        SetModernDefenseActive = 15
+        SetModernDefenseActive = 15,
+        StartNuclearProject = 16
     }
 
     [Serializable]

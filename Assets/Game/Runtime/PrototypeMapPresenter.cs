@@ -35,6 +35,12 @@ namespace LittleCiv.Runtime
             new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<GameEntityId, GameCommand> plannedDefenseActions =
             new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedNuclearProjects =
+            new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedResearch =
+            new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedCitizenAssignments =
+            new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<string, GameCommand> plannedFoodTransfers =
             new Dictionary<string, GameCommand>();
         private readonly Dictionary<GameEntityId, Vector3> visibleTilePositions =
@@ -69,6 +75,8 @@ namespace LittleCiv.Runtime
         private Material moatDefenseMaterial;
         private Material modernDefenseMaterial;
         private Texture2D routeTurnMarker;
+        private bool showResearchPanel;
+        private Vector2 researchScroll;
 
         private void Start()
         {
@@ -133,7 +141,8 @@ namespace LittleCiv.Runtime
         private bool IsPointerOverHud(Vector2 screenPosition)
         {
             var guiPosition = new Vector2(screenPosition.x, Screen.height - screenPosition.y) / UiScale;
-            if (new Rect(16f, 16f, 410f, 390f).Contains(guiPosition)) return true;
+            if (new Rect(16f, 16f, 410f, 425f).Contains(guiPosition)) return true;
+            if (showResearchPanel && ResearchPanelRect().Contains(guiPosition)) return true;
             if (!selectedTileId.IsValid) return false;
             var logicalWidth = Screen.width / UiScale;
             var compact = logicalWidth < 900f;
@@ -370,6 +379,9 @@ namespace LittleCiv.Runtime
             plannedRepairs.Clear();
             plannedDefenseConstructions.Clear();
             plannedDefenseActions.Clear();
+            plannedNuclearProjects.Clear();
+            plannedResearch.Clear();
+            plannedCitizenAssignments.Clear();
             plannedFoodTransfers.Clear();
             selectedUnitId = default;
             selectedTileId = default;
@@ -584,6 +596,35 @@ namespace LittleCiv.Runtime
             ShowCities(new[] { command.SubjectId });
         }
 
+        private void ReserveAgricultureCitizens(DistrictState district, int desiredCitizens)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Citizen orders are unavailable during maneuver re-command.";
+                return;
+            }
+            if (plannedCitizenAssignments.TryGetValue(district.Id, out var previous))
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId, TurnNumber = state.TurnNumber,
+                Type = GameCommandType.AssignCitizen, SubjectId = district.Id, PrimaryValue = desiredCitizens
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted) plannedCitizenAssignments[district.Id] = command;
+            statusMessage = result == CommandMutationResult.Accepted
+                ? $"Agriculture staffing change reserved: {desiredCitizens} citizen(s)."
+                : $"Citizen order rejected: {result}";
+        }
+
+        private void CancelAgricultureCitizens(DistrictState district)
+        {
+            if (!plannedCitizenAssignments.TryGetValue(district.Id, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedCitizenAssignments.Remove(district.Id);
+            statusMessage = "Agriculture staffing change cancelled.";
+        }
+
         private void ReserveTraining(DistrictState district, UnitType type)
         {
             if (IsManeuverRecommandPhase())
@@ -704,6 +745,61 @@ namespace LittleCiv.Runtime
             statusMessage = "Modern defense control change cancelled.";
         }
 
+        private void ReserveNuclearProject(DistrictState district)
+        {
+            if (IsManeuverRecommandPhase() || plannedNuclearProjects.ContainsKey(district.Id)) return;
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.StartNuclearProject,
+                SubjectId = district.Id
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted) plannedNuclearProjects[district.Id] = command;
+            statusMessage = result == CommandMutationResult.Accepted
+                ? "Nuclear weapon project reserved (10 gold / 3 turns)."
+                : $"Nuclear project rejected: {result}";
+        }
+
+        private void CancelNuclearProject(DistrictState district)
+        {
+            if (!plannedNuclearProjects.TryGetValue(district.Id, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedNuclearProjects.Remove(district.Id);
+            statusMessage = "Nuclear project reservation cancelled.";
+        }
+
+        private void ReserveResearch(ResearchType type)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Research selection is unavailable during maneuver re-command.";
+                return;
+            }
+            if (plannedResearch.TryGetValue(activePlayerId, out var previous))
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.SelectResearch,
+                PrimaryValue = (int)type
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted) plannedResearch[activePlayerId] = command;
+            else plannedResearch.Remove(activePlayerId);
+            statusMessage = result == CommandMutationResult.Accepted
+                ? $"Research selection reserved: {type}."
+                : $"Research selection rejected: {result}";
+        }
+
+        private void CancelResearchReservation()
+        {
+            if (!plannedResearch.TryGetValue(activePlayerId, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedResearch.Remove(activePlayerId);
+            statusMessage = "Research selection change cancelled; current research will continue.";
+        }
+
         private void AdjustSelectedUnitFood(UnitState unit, int change)
         {
             if (IsManeuverRecommandPhase())
@@ -721,7 +817,7 @@ namespace LittleCiv.Runtime
             plannedFoodAdjustments.TryGetValue(unit.Id, out var existing);
             var currentAdjustment = existing == null ? 0 : existing.PrimaryValue;
             var minimum = -unit.CarriedFood;
-            var maximum = Mathf.Min(UnitRules.FoodCapacity(unit.Type) - unit.CarriedFood, city.StoredFood);
+            var maximum = Mathf.Min(UnitRules.FoodCapacity(state, unit) - unit.CarriedFood, city.StoredFood);
             var adjustment = Mathf.Clamp(currentAdjustment + change, minimum, maximum);
             if (adjustment == currentAdjustment) return;
 
@@ -763,7 +859,7 @@ namespace LittleCiv.Runtime
             plannedFoodTransfers.TryGetValue(key, out var existing);
             var current = existing == null ? 0 : existing.PrimaryValue;
             var maximum = Mathf.Min(supplier.CarriedFood,
-                UnitRules.FoodCapacity(receiver.Type) - receiver.CarriedFood);
+                UnitRules.FoodCapacity(state, receiver) - receiver.CarriedFood);
             var amount = Mathf.Clamp(current + change, 0, maximum);
             if (existing != null)
             {
@@ -1238,7 +1334,7 @@ namespace LittleCiv.Runtime
 
             var city = state.Cities[focusedCityIndex];
             var economy = CityEconomyResolver.CalculateBreakdown(state, city);
-            GUI.Box(new Rect(16f, 16f, 410f, 390f), string.Empty);
+            GUI.Box(new Rect(16f, 16f, 410f, 425f), string.Empty);
             GUI.Label(new Rect(28f, 25f, 360f, 22f), $"City {city.Name}  World ({city.WorldQ}, {city.WorldR})");
             GUI.Label(new Rect(28f, 47f, 360f, 22f),
                 $"Population {city.Population} | Gold {city.Gold} | Stored food {city.StoredFood}");
@@ -1265,11 +1361,81 @@ namespace LittleCiv.Runtime
             if (GUI.Button(new Rect(28f, 307f, 170f, 30f), "Cancel selected route")) CancelSelectedMove();
             if (GUI.Button(new Rect(210f, 307f, 198f, 30f), "Confirm player turn")) ConfirmActivePlayer();
             GUI.enabled = true;
-            GUI.Label(new Rect(28f, 342f, 380f, 20f), "Left: select | Right: move | WASD: pan | Wheel: zoom");
-            if (turnLog.Count > 0) GUI.Label(new Rect(28f, 366f, 380f, 20f), turnLog[0]);
+            if (GUI.Button(new Rect(28f, 342f, 380f, 30f),
+                showResearchPanel ? "Close research" : "Open research"))
+                showResearchPanel = !showResearchPanel;
+            GUI.Label(new Rect(28f, 377f, 380f, 20f), "Left: select | Right: move | WASD: pan | Wheel: zoom");
+            if (turnLog.Count > 0) GUI.Label(new Rect(28f, 401f, 380f, 20f), turnLog[0]);
             DrawSelectedTilePanel();
+            if (showResearchPanel) DrawResearchPanel();
             DrawCombatLog();
             GUI.matrix = previousGuiMatrix;
+        }
+
+        private Rect ResearchPanelRect()
+        {
+            var logicalWidth = Screen.width / UiScale;
+            return logicalWidth < 900f
+                ? new Rect(16f, 16f, 414f, 600f)
+                : new Rect(Mathf.Max(440f, logicalWidth - 844f), 16f, 414f, 600f);
+        }
+
+        private void DrawResearchPanel()
+        {
+            var rect = ResearchPanelRect();
+            GUI.Box(rect, string.Empty);
+            var player = FindPlayer(activePlayerId);
+            if (player == null) return;
+            plannedResearch.TryGetValue(activePlayerId, out var planned);
+            var shownResearch = planned == null ? player.CurrentResearch : (ResearchType)planned.PrimaryValue;
+            var currentProgress = shownResearch == ResearchType.None
+                ? 0 : ResearchResolver.Progress(player, shownResearch);
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, 290f, 24f),
+                $"RESEARCH — {player.Slot}");
+            if (GUI.Button(new Rect(rect.x + 310f, rect.y + 8f, 90f, 28f), "Close"))
+            {
+                showResearchPanel = false;
+                return;
+            }
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 38f, 380f, 22f),
+                shownResearch == ResearchType.None
+                    ? "Current: none (stores at most one turn of science)"
+                    : $"Current: {shownResearch} {currentProgress}/{ResearchRules.Cost(shownResearch)}" +
+                      (planned == null ? string.Empty : " (CHANGE RESERVED)"));
+            var completedText = player.CompletedResearch == null || player.CompletedResearch.Count == 0
+                ? "none"
+                : string.Join(", ", player.CompletedResearch.OrderBy(item => (int)item));
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 62f, 380f, 42f),
+                $"Completed: {completedText}");
+            if (planned != null && GUI.Button(new Rect(rect.x + 14f, rect.y + 104f, 376f, 28f),
+                "Cancel reserved research change"))
+                CancelResearchReservation();
+
+            var viewport = new Rect(rect.x + 8f, rect.y + 140f, rect.width - 16f, rect.height - 150f);
+            var content = new Rect(0f, 0f, 378f, 410f);
+            researchScroll = GUI.BeginScrollView(viewport, researchScroll, content);
+            var types = System.Enum.GetValues(typeof(ResearchType)).Cast<ResearchType>()
+                .Where(item => item != ResearchType.None).OrderBy(item => (int)item).ToList();
+            for (var index = 0; index < types.Count; index++)
+            {
+                var type = types[index];
+                var column = index % 2;
+                var row = index / 2;
+                var prerequisite = ResearchRules.Prerequisite(type);
+                var completed = player.CompletedResearch.Contains(type);
+                var available = prerequisite == ResearchType.None || player.CompletedResearch.Contains(prerequisite);
+                var progress = ResearchResolver.Progress(player, type);
+                var label = completed
+                    ? $"✓ {type}"
+                    : available
+                        ? $"{type} {progress}/{ResearchRules.Cost(type)}"
+                        : $"{type} ← {prerequisite}";
+                GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && available && !completed;
+                if (GUI.Button(new Rect(2f + (column * 188f), 4f + (row * 38f), 182f, 32f), label))
+                    ReserveResearch(type);
+            }
+            GUI.enabled = true;
+            GUI.EndScrollView();
         }
 
         private void DrawCombatLog()
@@ -1455,6 +1621,74 @@ namespace LittleCiv.Runtime
                     "Select an undeveloped green tile to order a new district.");
                 return;
             }
+            if (district.Type == DistrictType.NuclearFacility)
+            {
+                var project = state.NuclearProjects.Find(item => item.DistrictId == district.Id);
+                if (project != null)
+                {
+                    GUI.Label(new Rect(x + 14f, y + 112f, 380f, 42f),
+                        project.IsCompleted ? "Nuclear weapon project: COMPLETED" :
+                        $"Nuclear weapon project: {project.RemainingTurns} turns remaining");
+                    return;
+                }
+                if (plannedNuclearProjects.ContainsKey(district.Id))
+                {
+                    GUI.Label(new Rect(x + 14f, y + 112f, 180f, 30f), "Nuclear project reserved");
+                    if (GUI.Button(new Rect(x + 210f, y + 112f, 180f, 30f), "Cancel project"))
+                        CancelNuclearProject(district);
+                    return;
+                }
+                var nuclearPlayer = city == null ? null : FindPlayer(city.OwnerId);
+                GUI.enabled = !state.IsGameOver && ownedAndControlled && district.IsOperational &&
+                              nuclearPlayer != null &&
+                              nuclearPlayer.CompletedResearch.Contains(ResearchType.NuclearFission) &&
+                              !nuclearPlayer.HasCompletedNuclearProject &&
+                              city.Gold >= NuclearProjectResolver.StartGold;
+                if (GUI.Button(new Rect(x + 14f, y + 112f, 376f, 30f),
+                    "Start nuclear weapon project — 10 gold / 3 turns"))
+                    ReserveNuclearProject(district);
+                GUI.enabled = true;
+                return;
+            }
+            if (district.Type == DistrictType.Agriculture)
+            {
+                var agriculturePlayer = city == null ? null : FindPlayer(city.OwnerId);
+                var irrigation = agriculturePlayer != null &&
+                                 agriculturePlayer.CompletedResearch.Contains(ResearchType.Irrigation);
+                var mechanized = agriculturePlayer != null &&
+                                 agriculturePlayer.CompletedResearch.Contains(ResearchType.MechanizedAgriculture);
+                if (mechanized)
+                {
+                    GUI.Label(new Rect(x + 14f, y + 112f, 376f, 42f),
+                        "Mechanized agriculture: 150% output with one citizen.");
+                    return;
+                }
+                if (!irrigation)
+                {
+                    GUI.Label(new Rect(x + 14f, y + 112f, 376f, 42f),
+                        "Research Irrigation to assign a second citizen for 150% output.");
+                    return;
+                }
+                if (plannedCitizenAssignments.TryGetValue(district.Id, out var citizenPlan))
+                {
+                    GUI.Label(new Rect(x + 14f, y + 112f, 190f, 30f),
+                        $"Staffing reserved: {citizenPlan.PrimaryValue}");
+                    if (GUI.Button(new Rect(x + 210f, y + 112f, 180f, 30f), "Cancel staffing"))
+                        CancelAgricultureCitizens(district);
+                    return;
+                }
+                var freeCitizens = city == null ? 0 : DistrictConstructionResolver.CountFreeCitizens(state, city) -
+                                                   CountPlannedDistricts(city.Id) -
+                                                   CountPlannedAdditionalAgricultureCitizens(city.Id);
+                GUI.enabled = ownedAndControlled && !state.IsGameOver &&
+                              (district.AssignedCitizens > 1 || freeCitizens > 0);
+                var desired = district.AssignedCitizens > 1 ? 1 : 2;
+                if (GUI.Button(new Rect(x + 14f, y + 112f, 376f, 30f),
+                    desired == 2 ? "Assign second citizen — output 150%" : "Return second citizen"))
+                    ReserveAgricultureCitizens(district, desired);
+                GUI.enabled = true;
+                return;
+            }
             if (district.Type != DistrictType.Military)
             {
                 GUI.Label(new Rect(x + 14f, y + 112f, 380f, 42f),
@@ -1494,6 +1728,18 @@ namespace LittleCiv.Runtime
                     ReserveTraining(district, type);
             }
             GUI.enabled = true;
+        }
+
+        private int CountPlannedAdditionalAgricultureCitizens(GameEntityId cityId)
+        {
+            var count = 0;
+            foreach (var pair in plannedCitizenAssignments)
+            {
+                var district = state.Districts.Find(item => item.Id == pair.Key);
+                if (district != null && district.CityId == cityId)
+                    count += Mathf.Max(0, pair.Value.PrimaryValue - district.AssignedCitizens);
+            }
+            return count;
         }
 
         private void DrawDefenseFacilityActions(float x, float y, DistrictState district)
@@ -1542,9 +1788,14 @@ namespace LittleCiv.Runtime
             if (type != DefenseFacilityType.ModernDefense)
             {
                 var next = (DefenseFacilityType)((int)type + 1);
-                GUI.enabled = ownedAndControlled && city.Gold >= DefenseFacilityResolver.GoldCost(next);
+                var player = city == null ? null : FindPlayer(city.OwnerId);
+                var unlocked = player != null && (!player.ResearchUnlocksEnabled ||
+                    player.UnlockedDefenseTypes.Contains(next));
+                GUI.enabled = ownedAndControlled && unlocked &&
+                              city.Gold >= DefenseFacilityResolver.GoldCost(next);
                 if (GUI.Button(new Rect(x + 14f, y + 52f, 376f, 30f),
-                    $"Build {next} — {DefenseFacilityResolver.GoldCost(next)} gold / " +
+                    (unlocked ? $"Build {next}" : $"{next} (research required)") +
+                    $" — {DefenseFacilityResolver.GoldCost(next)} gold / " +
                     $"{DefenseFacilityResolver.ConstructionTurns(next)} turns"))
                     ReserveDefenseConstruction(district, next);
                 GUI.enabled = true;
@@ -1602,7 +1853,7 @@ namespace LittleCiv.Runtime
             plannedFoodAdjustments.TryGetValue(selected.Id, out var adjustmentCommand);
             var adjustment = adjustmentCommand == null ? 0 : adjustmentCommand.PrimaryValue;
             var projected = selected.CarriedFood + adjustment;
-            var capacity = UnitRules.FoodCapacity(selected.Type);
+            var capacity = UnitRules.FoodCapacity(state, selected);
             GUI.Label(new Rect(x + 14f, foodY, 376f, 22f),
                 city == null
                     ? $"Food {selected.CarriedFood}/{capacity} | adjust in controlled home territory"
@@ -1635,36 +1886,45 @@ namespace LittleCiv.Runtime
                 plannedFoodTransfers.TryGetValue(takeKey, out var take);
                 var rowY = y + 24f + (i * 58f);
                 GUI.Label(new Rect(x + 14f, rowY, 376f, 22f),
-                    $"{partner.Type} {partner.Id} | Food {partner.CarriedFood}/{UnitRules.FoodCapacity(partner.Type)}" +
+                    $"{partner.Type} {partner.Id} | Food {partner.CarriedFood}/{UnitRules.FoodCapacity(state, partner)}" +
                     (give != null ? $" | give {give.PrimaryValue}" : string.Empty) +
                     (take != null ? $" | take {take.PrimaryValue}" : string.Empty));
                 GUI.enabled = !state.IsGameOver && selected.CarriedFood > 0 &&
-                              partner.CarriedFood < UnitRules.FoodCapacity(partner.Type);
+                              partner.CarriedFood < UnitRules.FoodCapacity(state, partner);
                 if (GUI.Button(new Rect(x + 14f, rowY + 24f, 82f, 28f), "Give 1"))
                     AdjustFoodTransfer(selected, partner, 1);
                 if (GUI.Button(new Rect(x + 102f, rowY + 24f, 82f, 28f), "Give max"))
-                    AdjustFoodTransfer(selected, partner, UnitRules.FoodCapacity(partner.Type));
+                    AdjustFoodTransfer(selected, partner, UnitRules.FoodCapacity(state, partner));
                 GUI.enabled = !state.IsGameOver && partner.CarriedFood > 0 &&
-                              selected.CarriedFood < UnitRules.FoodCapacity(selected.Type);
+                              selected.CarriedFood < UnitRules.FoodCapacity(state, selected);
                 if (GUI.Button(new Rect(x + 210f, rowY + 24f, 82f, 28f), "Take 1"))
                     AdjustFoodTransfer(partner, selected, 1);
                 if (GUI.Button(new Rect(x + 298f, rowY + 24f, 92f, 28f), "Take max"))
-                    AdjustFoodTransfer(partner, selected, UnitRules.FoodCapacity(selected.Type));
+                    AdjustFoodTransfer(partner, selected, UnitRules.FoodCapacity(state, selected));
                 GUI.enabled = true;
             }
         }
 
         private void DrawDistrictBuildButton(float x, float y, DistrictType type)
         {
-            if (GUI.Button(new Rect(x, y, 180f, 30f), $"Build {type}"))
+            var player = FindPlayer(activePlayerId);
+            var unlocked = player != null && (!player.ResearchUnlocksEnabled ||
+                player.UnlockedDistrictTypes.Contains(type));
+            var previous = GUI.enabled;
+            GUI.enabled = previous && unlocked;
+            if (GUI.Button(new Rect(x, y, 180f, 30f),
+                unlocked ? $"Build {type}" : $"{type} (locked)"))
                 ReserveDistrictConstruction(type);
+            GUI.enabled = previous;
         }
 
         private static void DrawYieldRow(float x, float y, string label, YieldBreakdown value)
         {
             GUI.Label(new Rect(x, y, 360f, 20f),
                 $"{label} {value.Total} = government {value.Government} + district {value.DistrictBase} " +
-                $"+ resource {value.ResourceBonus} + adjacency {value.AdjacencyBonus}");
+                $"+ resource {value.ResourceBonus} + adjacency {value.AdjacencyBonus} " +
+                $"+ research {value.ResearchBonus} + staffing {value.StaffingBonus} " +
+                $"+ multiplier {value.MultiplierBonus}");
         }
 
         private static string Signed(int value)

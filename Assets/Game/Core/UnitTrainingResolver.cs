@@ -22,6 +22,9 @@ namespace LittleCiv.Core
             var city = FindCity(state, district.CityId);
             if (city == null || city.OwnerId != command.PlayerId || HasTraining(state, district.Id)) return false;
             var type = (UnitType)command.PrimaryValue;
+            var player = state.Players.Find(item => item.Id == command.PlayerId);
+            if (player == null || (player.ResearchUnlocksEnabled &&
+                !player.UnlockedUnitTypes.Contains(type))) return false;
             var cost = UnitRules.TrainingGold(type);
             if (city.Gold < cost) return false;
 

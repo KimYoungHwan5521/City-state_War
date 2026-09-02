@@ -19,6 +19,9 @@ namespace LittleCiv.Core
             if (!Enum.IsDefined(typeof(DistrictType), command.PrimaryValue)) return false;
             var type = (DistrictType)command.PrimaryValue;
             if (type == DistrictType.Government) return false;
+            var player = state.Players.Find(item => item.Id == command.PlayerId);
+            if (player == null || (player.ResearchUnlocksEnabled &&
+                !player.UnlockedDistrictTypes.Contains(type))) return false;
             if (!IsBuildableTile(state, city.Id, command.TargetId)) return false;
             if (FindDistrictAt(state, command.TargetId) != null) return false;
             if (CountFreeCitizens(state, city) <= 0) return false;

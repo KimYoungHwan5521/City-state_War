@@ -30,6 +30,7 @@ namespace LittleCiv.Core
             HashDistricts(ref hash, state.Districts);
             HashUnitTrainings(ref hash, state.UnitTrainings);
             HashDefenseFacilities(ref hash, state.DefenseFacilities);
+            HashNuclearProjects(ref hash, state.NuclearProjects);
             HashMapTopology(ref hash, state.MapTopology);
             return hash;
         }
@@ -52,6 +53,35 @@ namespace LittleCiv.Core
                 Add(ref hash, unlockedUnits.Count);
                 for (var unlockedIndex = 0; unlockedIndex < unlockedUnits.Count; unlockedIndex++)
                     Add(ref hash, (int)unlockedUnits[unlockedIndex]);
+                var districts = item.UnlockedDistrictTypes == null
+                    ? new List<DistrictType>() : new List<DistrictType>(item.UnlockedDistrictTypes);
+                districts.Sort();
+                Add(ref hash, districts.Count);
+                foreach (var type in districts) Add(ref hash, (int)type);
+                var defenses = item.UnlockedDefenseTypes == null
+                    ? new List<DefenseFacilityType>() : new List<DefenseFacilityType>(item.UnlockedDefenseTypes);
+                defenses.Sort();
+                Add(ref hash, defenses.Count);
+                foreach (var type in defenses) Add(ref hash, (int)type);
+                Add(ref hash, (int)item.CurrentResearch);
+                var completed = item.CompletedResearch == null
+                    ? new List<ResearchType>() : new List<ResearchType>(item.CompletedResearch);
+                completed.Sort();
+                Add(ref hash, completed.Count);
+                foreach (var type in completed) Add(ref hash, (int)type);
+                var progress = item.ResearchProgress == null
+                    ? new List<ResearchProgressState>() : new List<ResearchProgressState>(item.ResearchProgress);
+                progress.Sort((left, right) => left.Type.CompareTo(right.Type));
+                Add(ref hash, progress.Count);
+                foreach (var research in progress)
+                {
+                    Add(ref hash, (int)research.Type);
+                    Add(ref hash, research.Progress);
+                }
+                Add(ref hash, item.FoodCapacityPercent);
+                Add(ref hash, item.ResearchUnlocksEnabled ? 1 : 0);
+                Add(ref hash, item.HasCompletedNuclearProject ? 1 : 0);
+                Add(ref hash, item.HasMetCultureVictoryCondition ? 1 : 0);
             }
         }
 
@@ -193,6 +223,20 @@ namespace LittleCiv.Core
                 Add(ref hash, item.RemainingConstructionTurns);
                 Add(ref hash, item.IsModernDefenseActive ? 1 : 0);
                 Add(ref hash, item.RemainingReactivationTurns);
+            }
+        }
+
+        private static void HashNuclearProjects(ref ulong hash, List<NuclearProjectState> source)
+        {
+            var items = SortedCopy(source, item => item.Id.Value);
+            Add(ref hash, items.Count);
+            foreach (var item in items)
+            {
+                Add(ref hash, item.Id.Value);
+                Add(ref hash, item.DistrictId.Value);
+                Add(ref hash, item.OwnerId.Value);
+                Add(ref hash, item.RemainingTurns);
+                Add(ref hash, item.IsCompleted ? 1 : 0);
             }
         }
 

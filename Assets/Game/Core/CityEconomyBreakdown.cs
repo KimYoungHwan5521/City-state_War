@@ -6,7 +6,11 @@ namespace LittleCiv.Core
         public int DistrictBase;
         public int ResourceBonus;
         public int AdjacencyBonus;
-        public int Total => Government + DistrictBase + ResourceBonus + AdjacencyBonus;
+        public int ResearchBonus;
+        public int StaffingBonus;
+        public int MultiplierBonus;
+        public int Total => Government + DistrictBase + ResourceBonus + AdjacencyBonus +
+                            ResearchBonus + StaffingBonus + MultiplierBonus;
     }
 
     public sealed class CityEconomyBreakdown

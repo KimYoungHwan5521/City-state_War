@@ -40,6 +40,16 @@ namespace LittleCiv.Core
         ModernDefense = 3
     }
 
+    public enum ResearchType
+    {
+        None = 0, School = 1, IronWorking = 2, Gunpowder = 3, Vehicles = 4,
+        NuclearFission = 5, Arts = 6, Printing = 7, MassMedia = 8,
+        Currency = 9, Finance = 10, EconomicAdministration = 11,
+        Irrigation = 12, Fertilizer = 13, MechanizedAgriculture = 14,
+        Salting = 15, Canning = 16, Fortification = 17,
+        AdvancedFortification = 18, ModernDefense = 19
+    }
+
     public enum TileResourceType
     {
         None = 0,
@@ -60,7 +70,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 16;
+        public const int CurrentSchemaVersion = 19;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -75,6 +85,7 @@ namespace LittleCiv.Core
         public List<DistrictState> Districts = new List<DistrictState>();
         public List<UnitTrainingState> UnitTrainings = new List<UnitTrainingState>();
         public List<DefenseFacilityState> DefenseFacilities = new List<DefenseFacilityState>();
+        public List<NuclearProjectState> NuclearProjects = new List<NuclearProjectState>();
         public WorldMapTopology MapTopology = new WorldMapTopology();
 
         public static GameState CreateNew(long matchSeed)
@@ -109,6 +120,22 @@ namespace LittleCiv.Core
         public int StoredFood;
         public int ReserveTimeSeconds = 180;
         public List<UnitType> UnlockedUnitTypes = new List<UnitType>();
+        public List<DistrictType> UnlockedDistrictTypes = new List<DistrictType>();
+        public List<DefenseFacilityType> UnlockedDefenseTypes = new List<DefenseFacilityType>();
+        public ResearchType CurrentResearch;
+        public List<ResearchType> CompletedResearch = new List<ResearchType>();
+        public List<ResearchProgressState> ResearchProgress = new List<ResearchProgressState>();
+        public int FoodCapacityPercent = 100;
+        public bool ResearchUnlocksEnabled;
+        public bool HasCompletedNuclearProject;
+        public bool HasMetCultureVictoryCondition;
+    }
+
+    [Serializable]
+    public sealed class ResearchProgressState
+    {
+        public ResearchType Type;
+        public int Progress;
     }
 
     [Serializable]
@@ -216,5 +243,15 @@ namespace LittleCiv.Core
         public int RemainingConstructionTurns;
         public bool IsModernDefenseActive;
         public int RemainingReactivationTurns;
+    }
+
+    [Serializable]
+    public sealed class NuclearProjectState
+    {
+        public EntityId Id;
+        public EntityId DistrictId;
+        public EntityId OwnerId;
+        public int RemainingTurns;
+        public bool IsCompleted;
     }
 }

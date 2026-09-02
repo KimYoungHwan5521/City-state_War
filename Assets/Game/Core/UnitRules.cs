@@ -110,6 +110,24 @@ namespace LittleCiv.Core
             }
         }
 
+        public static int FoodCapacity(GameState state, UnitState unit)
+        {
+            if (unit == null) throw new ArgumentNullException(nameof(unit));
+            return FoodCapacity(state, unit.OwnerId, unit.Type);
+        }
+
+        public static int FoodCapacity(GameState state, EntityId ownerId, UnitType type)
+        {
+            var percent = 100;
+            if (state != null)
+            {
+                var player = state.Players.Find(item => item.Id == ownerId);
+                if (player != null && player.FoodCapacityPercent > 0)
+                    percent = player.FoodCapacityPercent;
+            }
+            return (FoodCapacity(type) * percent) / 100;
+        }
+
         public static int FoodConsumption(UnitType type)
         {
             if (!Enum.IsDefined(typeof(UnitType), type))

@@ -45,7 +45,7 @@ namespace LittleCiv.Core
 
             if (command.PrimaryValue > 0)
             {
-                var freeCapacity = UnitRules.FoodCapacity(unit.Type) - unit.CarriedFood;
+                var freeCapacity = UnitRules.FoodCapacity(state, unit) - unit.CarriedFood;
                 if (freeCapacity <= 0 || city.StoredFood <= 0) return false;
                 loadedFood = Math.Min(command.PrimaryValue, Math.Min(freeCapacity, city.StoredFood));
                 if (loadedFood <= 0) return false;
@@ -169,7 +169,7 @@ namespace LittleCiv.Core
                 receiver.OwnerId != command.PlayerId || supplier.TileId != receiver.TileId ||
                 supplier.CarriedFood <= 0) return false;
 
-            var freeCapacity = UnitRules.FoodCapacity(receiver.Type) - receiver.CarriedFood;
+            var freeCapacity = UnitRules.FoodCapacity(state, receiver) - receiver.CarriedFood;
             if (freeCapacity <= 0) return false;
             transferredFood = Math.Min(command.PrimaryValue, Math.Min(freeCapacity, supplier.CarriedFood));
             if (transferredFood <= 0) return false;

@@ -102,6 +102,15 @@ namespace LittleCiv.Core
                 }
                 if (phase == TurnPhase.ConstructionTrainingProjects)
                 {
+                    var nuclearProjects = NuclearProjectResolver.Advance(state);
+                    for (var projectIndex = 0; projectIndex < nuclearProjects.Count; projectIndex++)
+                    {
+                        var project = nuclearProjects[projectIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            project.Completed ? GameEventType.NuclearProjectCompleted :
+                                GameEventType.NuclearProjectProgressed,
+                            project.OwnerId, project.ProjectId, project.RemainingTurns));
+                    }
                     var completedDefenses = DefenseFacilityResolver.AdvanceConstruction(state);
                     for (var defenseIndex = 0; defenseIndex < completedDefenses.Count; defenseIndex++)
                     {
@@ -251,6 +260,38 @@ namespace LittleCiv.Core
                 }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 
+                if (phase == TurnPhase.Research)
+                {
+                    var research = ResearchResolver.Advance(state);
+                    for (var researchIndex = 0; researchIndex < research.Count; researchIndex++)
+                    {
+                        var item = research[researchIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.ResearchProgressed, item.PlayerId,
+                            primaryValue: (int)item.Type, secondaryValue: item.TotalProgress));
+                        if (item.Completed)
+                            resolution.Events.Add(CreateEvent(turnNumber,
+                                GameEventType.ResearchCompleted, item.PlayerId,
+                                primaryValue: (int)item.Type));
+                    }
+                }
+
+                if (phase == TurnPhase.CultureVictory)
+                {
+                    var winner = VictoryResolver.ResolveCulture(state);
+                    if (winner.IsValid)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                            winner, primaryValue: (int)VictoryType.Culture));
+                }
+
+                if (phase == TurnPhase.ScienceVictory)
+                {
+                    var winner = VictoryResolver.ResolveScience(state);
+                    if (winner.IsValid)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                            winner, primaryValue: (int)VictoryType.Science));
+                }
+
                 if (phase == TurnPhase.TradeAndOrders)
                 {
                     AddPlanningDefaults(state, sortedCommands, resolution);
@@ -325,6 +366,9 @@ namespace LittleCiv.Core
                 UnitPromotionResult promotion = null;
                 DistrictState startedRepair = null;
                 DefenseFacilityState startedDefense = null;
+                var selectedResearch = ResearchType.None;
+                NuclearProjectState startedNuclearProject = null;
+                var citizenAssignmentChanged = false;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
@@ -333,6 +377,15 @@ namespace LittleCiv.Core
                 {
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.AssignCitizen)
+                {
+                    citizenAssignmentChanged = AgricultureCitizenResolver.TryAssign(state, command);
+                    if (!citizenAssignmentChanged)
+                    {
+                        accepted = false;
+                        validation = CommandValidationError.InvalidPayload;
+                    }
                 }
                 if (accepted && command.Type == GameCommandType.SetPriority &&
                     !TrySetPriority(state, command))
@@ -382,6 +435,18 @@ namespace LittleCiv.Core
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
                 }
+                if (accepted && command.Type == GameCommandType.SelectResearch &&
+                    !ResearchResolver.TrySelect(state, command, out selectedResearch))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.StartNuclearProject &&
+                    !NuclearProjectResolver.TryStart(state, command, out startedNuclearProject))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
                 resolution.Events.Add(CreateEvent(
                     state.TurnNumber,
                     accepted ? GameEventType.CommandAccepted : GameEventType.CommandRejected,
@@ -401,6 +466,18 @@ namespace LittleCiv.Core
                             startedDistrict.Id,
                             (int)startedDistrict.Type,
                             startedDistrict.RemainingConstructionTurns));
+                    }
+                    if (selectedResearch != ResearchType.None)
+                    {
+                        resolution.Events.Add(CreateEvent(state.TurnNumber,
+                            GameEventType.ResearchSelected, command.PlayerId,
+                            primaryValue: (int)selectedResearch));
+                    }
+                    if (startedNuclearProject != null)
+                    {
+                        resolution.Events.Add(CreateEvent(state.TurnNumber,
+                            GameEventType.NuclearProjectStarted, command.PlayerId,
+                            startedNuclearProject.Id, startedNuclearProject.RemainingTurns));
                     }
                     if (startedDefense != null)
                     {
@@ -757,6 +834,7 @@ namespace LittleCiv.Core
 
         private static TurnPhase GetPhase(GameCommandType type)
         {
+            if (type == GameCommandType.SelectResearch) return TurnPhase.Research;
             return type == GameCommandType.MoveUnit
                 ? TurnPhase.MovementCombatOccupation
                 : TurnPhase.TradeAndOrders;
