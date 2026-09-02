@@ -31,6 +31,8 @@ namespace LittleCiv.Core
             HashUnitTrainings(ref hash, state.UnitTrainings);
             HashDefenseFacilities(ref hash, state.DefenseFacilities);
             HashNuclearProjects(ref hash, state.NuclearProjects);
+            HashTradeReservations(ref hash, state.TradeReservations);
+            HashLevies(ref hash, state.Levies);
             HashMapTopology(ref hash, state.MapTopology);
             return hash;
         }
@@ -108,7 +110,35 @@ namespace LittleCiv.Core
                 Add(ref hash, item.LastGoldProduction);
                 Add(ref hash, item.LastScienceProduction);
                 Add(ref hash, item.LastCultureProduction);
+                Add(ref hash, (int)item.NeutralCurrentResearch);
+                var neutralCompleted = item.NeutralCompletedResearch == null
+                    ? new List<ResearchType>() : new List<ResearchType>(item.NeutralCompletedResearch);
+                neutralCompleted.Sort();
+                Add(ref hash, neutralCompleted.Count);
+                foreach (var research in neutralCompleted) Add(ref hash, (int)research);
+                var neutralProgress = item.NeutralResearchProgress == null
+                    ? new List<ResearchProgressState>() : new List<ResearchProgressState>(item.NeutralResearchProgress);
+                neutralProgress.Sort((left, right) => left.Type.CompareTo(right.Type));
+                Add(ref hash, neutralProgress.Count);
+                foreach (var research in neutralProgress)
+                {
+                    Add(ref hash, (int)research.Type);
+                    Add(ref hash, research.Progress);
+                }
+                Add(ref hash, (int)item.NeutralSpecialization);
                 Add(ref hash, item.CultureSubjectToId.Value);
+                Add(ref hash, item.OccupyingPlayerId.Value);
+                Add(ref hash, item.IndependenceProgress);
+                var relations = item.NeutralRelations == null
+                    ? new List<NeutralRelationState>()
+                    : new List<NeutralRelationState>(item.NeutralRelations);
+                relations.Sort((left, right) => left.PlayerId.CompareTo(right.PlayerId));
+                Add(ref hash, relations.Count);
+                foreach (var relation in relations)
+                {
+                    Add(ref hash, relation.PlayerId.Value);
+                    Add(ref hash, relation.Favor);
+                }
                 var influences = item.CultureInfluences == null
                     ? new List<CultureInfluenceState>()
                     : new List<CultureInfluenceState>(item.CultureInfluences);
@@ -240,6 +270,49 @@ namespace LittleCiv.Core
                 Add(ref hash, item.OwnerId.Value);
                 Add(ref hash, item.RemainingTurns);
                 Add(ref hash, item.IsCompleted ? 1 : 0);
+            }
+        }
+
+        private static void HashTradeReservations(ref ulong hash, List<TradeReservationState> source)
+        {
+            var items = SortedCopy(source, item => item.Id.Value);
+            Add(ref hash, items.Count);
+            foreach (var item in items)
+            {
+                Add(ref hash, item.Id.Value);
+                Add(ref hash, item.PlayerId.Value);
+                Add(ref hash, item.SourceCityId.Value);
+                Add(ref hash, item.TargetCityId.Value);
+                Add(ref hash, (int)item.ResourceType);
+                Add(ref hash, item.ResourceAmount);
+                Add(ref hash, item.NetGoldPayment);
+                Add(ref hash, item.ApplyTurn);
+                Add(ref hash, item.IsSale ? 1 : 0);
+            }
+        }
+
+        private static void HashLevies(ref ulong hash, List<LevyState> source)
+        {
+            var items = SortedCopy(source, item => item.Id.Value);
+            Add(ref hash, items.Count);
+            foreach (var item in items)
+            {
+                Add(ref hash, item.Id.Value);
+                Add(ref hash, item.MilitaryCityId.Value);
+                Add(ref hash, item.PlayerId.Value);
+                Add(ref hash, item.PaymentCityId.Value);
+                Add(ref hash, item.StartTurn);
+                Add(ref hash, item.EndTurnExclusive);
+                Add(ref hash, item.PaidGold);
+                var units = item.Units == null ? new List<LevyUnitState>() :
+                    new List<LevyUnitState>(item.Units);
+                units.Sort((left, right) => left.UnitId.CompareTo(right.UnitId));
+                Add(ref hash, units.Count);
+                foreach (var unit in units)
+                {
+                    Add(ref hash, unit.UnitId.Value);
+                    Add(ref hash, unit.OriginalHomeCityId.Value);
+                }
             }
         }
 

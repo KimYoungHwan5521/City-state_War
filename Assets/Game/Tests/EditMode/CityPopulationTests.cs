@@ -16,9 +16,9 @@ namespace LittleCiv.Tests
 
             var result = new TurnProcessor().Resolve(state, new GameCommand[0]);
 
-            Assert.That(city.LastFoodProduction, Is.EqualTo(6));
+            Assert.That(city.LastFoodProduction, Is.EqualTo(8));
             Assert.That(city.Population, Is.EqualTo(5));
-            Assert.That(city.GrowthProgress, Is.Zero);
+            Assert.That(city.GrowthProgress, Is.EqualTo(1));
             Assert.That(city.GovernmentCitizens, Is.EqualTo(1));
             Assert.That(result.Events.Any(item =>
                 item.Type == GameEventType.PopulationIncreased &&
@@ -36,14 +36,14 @@ namespace LittleCiv.Tests
             CityEconomyResolver.ResolveProduction(state);
             CityPopulationResolver.ResolveGrowth(state);
 
-            Assert.That(city.Population, Is.EqualTo(4));
-            Assert.That(city.GrowthProgress, Is.EqualTo(30));
+            Assert.That(city.Population, Is.EqualTo(5));
+            Assert.That(city.GrowthProgress, Is.EqualTo(20));
 
             city.LastFoodProduction = 20;
             CityPopulationResolver.ResolveGrowth(state);
 
-            Assert.That(city.Population, Is.EqualTo(5));
-            Assert.That(city.GrowthProgress, Is.EqualTo(34));
+            Assert.That(city.Population, Is.EqualTo(6));
+            Assert.That(city.GrowthProgress, Is.EqualTo(20));
         }
 
         [Test]
@@ -90,7 +90,7 @@ namespace LittleCiv.Tests
             new TurnProcessor().Resolve(state, new GameCommand[0]);
 
             Assert.That(city.Population, Is.EqualTo(3));
-            Assert.That(city.StoredFood, Is.EqualTo(96));
+            Assert.That(city.StoredFood, Is.EqualTo(95));
         }
 
         [Test]

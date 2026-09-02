@@ -55,6 +55,7 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(9003);
             var unit = state.Units[0];
+            MoveOutsideHomeTerritory(state, unit);
             unit.CarriedFood = 0;
 
             var resolution = new TurnProcessor().Resolve(state, new GameCommand[0]);
@@ -88,6 +89,7 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(9005);
             var unit = state.Units[0];
+            MoveOutsideHomeTerritory(state, unit);
             unit.CarriedFood = 0;
             var processor = new TurnProcessor();
 
@@ -101,6 +103,13 @@ namespace LittleCiv.Tests
                 item.SourceId == unit.Id), Is.True);
             Assert.That(second.Events.Any(item => item.Type == GameEventType.UnitDestroyed &&
                 item.SourceId == unit.Id), Is.True);
+        }
+
+        private static void MoveOutsideHomeTerritory(GameState state, UnitState unit)
+        {
+            unit.TileId = state.Tiles.First(item =>
+                state.Cities.First(city => city.Id == item.CityId).OwnerId != unit.OwnerId &&
+                state.Units.All(other => other.Id == unit.Id || other.TileId != item.Id)).Id;
         }
     }
 }

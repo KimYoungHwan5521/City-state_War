@@ -86,6 +86,7 @@ namespace LittleCiv.Core
 
         private static void UpdateSubject(CityState city, List<PlayerState> majorPlayers)
         {
+            var previous = city.CultureSubjectToId;
             city.CultureSubjectToId = default;
             for (var index = 0; index < majorPlayers.Count; index++)
             {
@@ -93,6 +94,10 @@ namespace LittleCiv.Core
                 city.CultureSubjectToId = majorPlayers[index].Id;
                 break;
             }
+            if (previous.IsValid && previous != city.CultureSubjectToId)
+                NeutralCityRules.SetFavor(city, previous, 2);
+            if (city.CultureSubjectToId.IsValid)
+                NeutralCityRules.SetFavor(city, city.CultureSubjectToId, 3);
         }
 
         private static CityState FindHomeCity(GameState state, EntityId ownerId)

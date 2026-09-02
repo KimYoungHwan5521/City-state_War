@@ -235,7 +235,7 @@ namespace LittleCiv.Tests
                 item.CityId == fixture.VictimCity.Id && item.Id != fixture.Tile.Id).Id;
             fixture.Unit.CarriedFood = 1;
             var originalOwner = AddUnit(
-                fixture.State, fixture.VictimCity, fixture.Tile.Id, UnitType.Militia, 1);
+                fixture.State, fixture.VictimCity, fixture.Unit.TileId, UnitType.Militia, 1);
             CityEconomyResolver.ResolveProduction(fixture.State);
 
             var result = UnitFoodResolver.Consume(fixture.State);

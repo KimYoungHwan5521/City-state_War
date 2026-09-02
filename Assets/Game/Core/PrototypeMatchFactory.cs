@@ -21,6 +21,18 @@ namespace LittleCiv.Core
             "A", "B", "N1", "N2", "N3", "N4", "N5", "N6", "N7", "N8"
         };
 
+        private static readonly NeutralCitySpecialization[] NeutralSpecializations =
+        {
+            NeutralCitySpecialization.Military,
+            NeutralCitySpecialization.Science,
+            NeutralCitySpecialization.Culture,
+            NeutralCitySpecialization.Commerce,
+            NeutralCitySpecialization.Commerce,
+            NeutralCitySpecialization.Culture,
+            NeutralCitySpecialization.Science,
+            NeutralCitySpecialization.Military
+        };
+
         public static GameState Create(long matchSeed)
         {
             var state = GameState.CreateNew(matchSeed);
@@ -57,15 +69,23 @@ namespace LittleCiv.Core
             for (var index = 0; index < CityCoordinates.Length; index++)
             {
                 var ownerId = index == 0 ? playerOne : index == 1 ? playerTwo : neutral;
-                state.Cities.Add(new CityState
+                var city = new CityState
                 {
                     Id = state.AllocateId(),
                     Name = CityNames[index],
                     OwnerId = ownerId,
                     WorldQ = CityCoordinates[index].Q,
                     WorldR = CityCoordinates[index].R,
-                    Population = 4
-                });
+                    Population = 4,
+                    NeutralSpecialization = index >= 2 ? NeutralSpecializations[index - 2] :
+                        NeutralCitySpecialization.None
+                };
+                if (index >= 2)
+                {
+                    city.NeutralRelations.Add(new NeutralRelationState { PlayerId = playerOne });
+                    city.NeutralRelations.Add(new NeutralRelationState { PlayerId = playerTwo });
+                }
+                state.Cities.Add(city);
             }
 
             WorldMapGenerator.PopulateTiles(state);

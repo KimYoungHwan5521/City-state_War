@@ -69,7 +69,15 @@ namespace LittleCiv.Core
                     LastGoldProduction = item.LastGoldProduction,
                     LastScienceProduction = item.LastScienceProduction,
                     LastCultureProduction = item.LastCultureProduction,
+                    NeutralCurrentResearch = item.NeutralCurrentResearch,
+                    NeutralCompletedResearch = item.NeutralCompletedResearch == null
+                        ? new List<ResearchType>() : new List<ResearchType>(item.NeutralCompletedResearch),
+                    NeutralResearchProgress = CloneResearchProgress(item.NeutralResearchProgress),
+                    NeutralSpecialization = item.NeutralSpecialization,
                     CultureSubjectToId = item.CultureSubjectToId,
+                    OccupyingPlayerId = item.OccupyingPlayerId,
+                    IndependenceProgress = item.IndependenceProgress,
+                    NeutralRelations = CloneNeutralRelations(item.NeutralRelations),
                     CultureInfluences = CloneCultureInfluences(item.CultureInfluences)
                 });
             }
@@ -176,6 +184,36 @@ namespace LittleCiv.Core
                     RemainingTurns = item.RemainingTurns, IsCompleted = item.IsCompleted
                 });
             }
+            for (var i = 0; i < source.TradeReservations.Count; i++)
+            {
+                var item = source.TradeReservations[i];
+                result.TradeReservations.Add(new TradeReservationState
+                {
+                    Id = item.Id, PlayerId = item.PlayerId,
+                    SourceCityId = item.SourceCityId, TargetCityId = item.TargetCityId,
+                    ResourceType = item.ResourceType, ResourceAmount = item.ResourceAmount,
+                    NetGoldPayment = item.NetGoldPayment, ApplyTurn = item.ApplyTurn,
+                    IsSale = item.IsSale
+                });
+            }
+            for (var i = 0; i < source.Levies.Count; i++)
+            {
+                var item = source.Levies[i];
+                var levy = new LevyState
+                {
+                    Id = item.Id, MilitaryCityId = item.MilitaryCityId,
+                    PlayerId = item.PlayerId, PaymentCityId = item.PaymentCityId,
+                    StartTurn = item.StartTurn, EndTurnExclusive = item.EndTurnExclusive,
+                    PaidGold = item.PaidGold
+                };
+                for (var unitIndex = 0; unitIndex < item.Units.Count; unitIndex++)
+                    levy.Units.Add(new LevyUnitState
+                    {
+                        UnitId = item.Units[unitIndex].UnitId,
+                        OriginalHomeCityId = item.Units[unitIndex].OriginalHomeCityId
+                    });
+                result.Levies.Add(levy);
+            }
 
             return result;
         }
@@ -194,6 +232,16 @@ namespace LittleCiv.Core
                     ReversionProgress = source[i].ReversionProgress
                 });
             }
+            return result;
+        }
+
+        private static List<NeutralRelationState> CloneNeutralRelations(List<NeutralRelationState> source)
+        {
+            var result = new List<NeutralRelationState>();
+            if (source == null) return result;
+            for (var index = 0; index < source.Count; index++)
+                result.Add(new NeutralRelationState
+                    { PlayerId = source[index].PlayerId, Favor = source[index].Favor });
             return result;
         }
 

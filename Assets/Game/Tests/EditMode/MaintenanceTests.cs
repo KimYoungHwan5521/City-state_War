@@ -134,7 +134,7 @@ namespace LittleCiv.Tests
             var resolution = new TurnProcessor().Resolve(state, new GameCommand[0]);
 
             Assert.That(state.Units.Contains(unit), Is.False);
-            Assert.That(city.StoredFood, Is.EqualTo(8));
+            Assert.That(city.StoredFood, Is.EqualTo(10));
             Assert.That(resolution.Events.Any(item => item.Type == GameEventType.UnitDisbanded &&
                 item.SourceId == unit.Id && item.TargetId == city.Id && item.PrimaryValue == 8), Is.True);
         }
@@ -156,7 +156,7 @@ namespace LittleCiv.Tests
         {
             var unit = new UnitState
             {
-                Id = state.AllocateId(), OwnerId = city.OwnerId,
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
                 TileId = state.Tiles.First(item => item.CityId == city.Id).Id,
                 Type = type, HitPoints = 16, CarriedFood = food
             };

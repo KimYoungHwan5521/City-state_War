@@ -28,7 +28,8 @@ namespace LittleCiv.Tests
             Assert.That(newDistricts.All(item => item.RemainingConstructionTurns == 3), Is.True);
             Assert.That(newDistricts.All(item => !item.IsOperational), Is.True);
             Assert.That(DistrictConstructionResolver.CountFreeCitizens(state, city), Is.Zero);
-            Assert.That(result.Events.Count(item => item.Type == GameEventType.DistrictConstructionStarted),
+            Assert.That(result.Events.Count(item => item.Type == GameEventType.DistrictConstructionStarted &&
+                                                    item.SourceId == city.OwnerId),
                 Is.EqualTo(3));
             Assert.That(result.Events.Count(item => item.Type == GameEventType.CommandRejected &&
                                                     item.SecondaryValue == (int)CommandValidationError.InvalidPayload),
@@ -79,6 +80,8 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(4203);
             var city = state.Cities[0];
+            state.Players.First(item => item.Id == city.OwnerId)
+                .UnlockedDistrictTypes.Add(DistrictType.Science);
             var tile = EmptyBuildableTiles(state, city).First();
             Assert.That(DistrictConstructionResolver.TryStart(
                 state, BuildCommand(state, city, tile, 1, DistrictType.Science), out _), Is.True);

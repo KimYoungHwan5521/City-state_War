@@ -15,7 +15,8 @@ namespace LittleCiv.Core
         TileCapacityReached = 7,
         PriorityLost = 8,
         SwapConflict = 9,
-        TrainedThisTurn = 10
+        TrainedThisTurn = 10,
+        LevyOriginProtected = 11
     }
 
     public sealed class MovementResult
@@ -67,6 +68,12 @@ namespace LittleCiv.Core
                 if (unit.RemainingMovement <= 0)
                 {
                     stopReason = MovementStopReason.InsufficientMovement;
+                    break;
+                }
+
+                if (NeutralLevyResolver.IsProtectedCityTile(state, unit.OwnerId, nextTileId, unit.Id))
+                {
+                    stopReason = MovementStopReason.LevyOriginProtected;
                     break;
                 }
 

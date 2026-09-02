@@ -20,8 +20,7 @@ namespace LittleCiv.Core
             var type = (DistrictType)command.PrimaryValue;
             if (type == DistrictType.Government) return false;
             var player = state.Players.Find(item => item.Id == command.PlayerId);
-            if (player == null || (player.ResearchUnlocksEnabled &&
-                !player.UnlockedDistrictTypes.Contains(type))) return false;
+            if (!IsUnlocked(player, city, type)) return false;
             if (!IsBuildableTile(state, city.Id, command.TargetId)) return false;
             if (FindDistrictAt(state, command.TargetId) != null) return false;
             if (CountFreeCitizens(state, city) <= 0) return false;
@@ -42,6 +41,26 @@ namespace LittleCiv.Core
             };
             state.Districts.Add(district);
             return true;
+        }
+
+        private static bool IsUnlocked(PlayerState player, CityState city, DistrictType type)
+        {
+            if (player == null) return false;
+            if (player.Slot != PlayerSlot.Neutral)
+                return !player.ResearchUnlocksEnabled || player.UnlockedDistrictTypes.Contains(type);
+            switch (type)
+            {
+                case DistrictType.Agriculture:
+                case DistrictType.Commerce:
+                case DistrictType.Military:
+                    return true;
+                case DistrictType.Science:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.School);
+                case DistrictType.Culture:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Arts);
+                default:
+                    return false;
+            }
         }
 
         public static List<EntityId> Advance(GameState state)

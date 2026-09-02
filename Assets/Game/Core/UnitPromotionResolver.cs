@@ -25,13 +25,13 @@ namespace LittleCiv.Core
             if (unit == null || player == null || unit.OwnerId != command.PlayerId ||
                 unit.RemainingMovement <= 0) return false;
             var promotedType = (UnitType)command.PrimaryValue;
-            if (!IsNextType(unit.Type, promotedType) || player.UnlockedUnitTypes == null ||
-                !player.UnlockedUnitTypes.Contains(promotedType)) return false;
+            if (!IsNextType(unit.Type, promotedType)) return false;
 
             var tile = FindTile(state, unit.TileId);
             var city = tile == null ? null : FindCity(state, tile.CityId);
             if (tile == null || city == null || tile.IsSharedBoundary ||
                 tile.ControllerId != command.PlayerId || city.OwnerId != command.PlayerId) return false;
+            if (!IsUnlocked(player, city, promotedType)) return false;
             var cost = UnitRules.TrainingGold(promotedType) - UnitRules.TrainingGold(unit.Type);
             if (cost < 0 || city.Gold < cost) return false;
 
@@ -52,6 +52,23 @@ namespace LittleCiv.Core
                 GoldCost = cost
             };
             return true;
+        }
+
+        private static bool IsUnlocked(PlayerState player, CityState city, UnitType type)
+        {
+            if (player.Slot != PlayerSlot.Neutral)
+                return player.UnlockedUnitTypes != null && player.UnlockedUnitTypes.Contains(type);
+            switch (type)
+            {
+                case UnitType.IronInfantry:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.IronWorking);
+                case UnitType.GunpowderInfantry:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Gunpowder);
+                case UnitType.MechanizedInfantry:
+                case UnitType.MotorizedSupply:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Vehicles);
+                default: return false;
+            }
         }
 
         private static bool IsNextType(UnitType current, UnitType target)

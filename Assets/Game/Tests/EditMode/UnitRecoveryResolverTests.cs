@@ -52,6 +52,7 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(8002);
             var unit = state.Units[0];
+            MoveOutsideHomeTerritory(state, unit);
             unit.HitPoints = 10;
             unit.CarriedFood = 2;
 
@@ -61,6 +62,13 @@ namespace LittleCiv.Tests
             Assert.That(unit.HitPoints, Is.EqualTo(12));
             Assert.That(resolution.Events.Any(item => item.Type == GameEventType.UnitRecovered &&
                 item.SourceId == unit.Id && item.PrimaryValue == 2), Is.True);
+        }
+
+        private static void MoveOutsideHomeTerritory(GameState state, UnitState unit)
+        {
+            unit.TileId = state.Tiles.First(item =>
+                state.Cities.First(city => city.Id == item.CityId).OwnerId != unit.OwnerId &&
+                state.Units.All(other => other.Id == unit.Id || other.TileId != item.Id)).Id;
         }
     }
 }

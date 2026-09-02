@@ -98,6 +98,10 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(915);
             var city = state.Cities[0];
+            var player = state.Players.First(item => item.Id == city.OwnerId);
+            player.UnlockedDefenseTypes.Add(DefenseFacilityType.Wall);
+            player.UnlockedDefenseTypes.Add(DefenseFacilityType.Moat);
+            player.UnlockedDefenseTypes.Add(DefenseFacilityType.ModernDefense);
             city.Gold = gold;
             var district = state.Districts.First(item => item.CityId == city.Id && item.Type == DistrictType.Government);
             return new Fixture { State = state, City = city, Tile = state.Tiles.First(item => item.Id == district.TileId) };

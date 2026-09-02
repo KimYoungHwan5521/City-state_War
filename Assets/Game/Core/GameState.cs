@@ -67,10 +67,26 @@ namespace LittleCiv.Core
         Conquest = 3
     }
 
+    public enum NeutralCitySpecialization
+    {
+        None = 0,
+        Military = 1,
+        Science = 2,
+        Culture = 3,
+        Commerce = 4
+    }
+
+    public enum NeutralDevelopmentStage
+    {
+        Early = 1,
+        Middle = 2,
+        Late = 3
+    }
+
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 22;
+        public const int CurrentSchemaVersion = 27;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -86,6 +102,8 @@ namespace LittleCiv.Core
         public List<UnitTrainingState> UnitTrainings = new List<UnitTrainingState>();
         public List<DefenseFacilityState> DefenseFacilities = new List<DefenseFacilityState>();
         public List<NuclearProjectState> NuclearProjects = new List<NuclearProjectState>();
+        public List<TradeReservationState> TradeReservations = new List<TradeReservationState>();
+        public List<LevyState> Levies = new List<LevyState>();
         public WorldMapTopology MapTopology = new WorldMapTopology();
 
         public static GameState CreateNew(long matchSeed)
@@ -158,8 +176,56 @@ namespace LittleCiv.Core
         public int LastGoldProduction;
         public int LastScienceProduction;
         public int LastCultureProduction;
+        public ResearchType NeutralCurrentResearch;
+        public List<ResearchType> NeutralCompletedResearch = new List<ResearchType>();
+        public List<ResearchProgressState> NeutralResearchProgress = new List<ResearchProgressState>();
+        public NeutralCitySpecialization NeutralSpecialization;
         public EntityId CultureSubjectToId;
+        public EntityId OccupyingPlayerId;
+        public int IndependenceProgress;
+        public List<NeutralRelationState> NeutralRelations = new List<NeutralRelationState>();
         public List<CultureInfluenceState> CultureInfluences = new List<CultureInfluenceState>();
+    }
+
+    [Serializable]
+    public sealed class NeutralRelationState
+    {
+        public EntityId PlayerId;
+        public int Favor;
+    }
+
+    [Serializable]
+    public sealed class TradeReservationState
+    {
+        public EntityId Id;
+        public EntityId PlayerId;
+        public EntityId SourceCityId;
+        public EntityId TargetCityId;
+        public TileResourceType ResourceType;
+        public int ResourceAmount;
+        public int NetGoldPayment;
+        public int ApplyTurn;
+        public bool IsSale;
+    }
+
+    [Serializable]
+    public sealed class LevyState
+    {
+        public EntityId Id;
+        public EntityId MilitaryCityId;
+        public EntityId PlayerId;
+        public EntityId PaymentCityId;
+        public int StartTurn;
+        public int EndTurnExclusive;
+        public int PaidGold;
+        public List<LevyUnitState> Units = new List<LevyUnitState>();
+    }
+
+    [Serializable]
+    public sealed class LevyUnitState
+    {
+        public EntityId UnitId;
+        public EntityId OriginalHomeCityId;
     }
 
     [Serializable]

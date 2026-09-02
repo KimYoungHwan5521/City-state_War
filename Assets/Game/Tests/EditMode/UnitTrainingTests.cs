@@ -193,6 +193,10 @@ namespace LittleCiv.Tests
         {
             var state = PrototypeMatchFactory.Create(seed);
             var city = state.Cities[0];
+            var player = state.Players.First(item => item.Id == city.OwnerId);
+            foreach (UnitType type in System.Enum.GetValues(typeof(UnitType)))
+                if (!player.UnlockedUnitTypes.Contains(type))
+                    player.UnlockedUnitTypes.Add(type);
             city.Gold = 20;
             var occupied = state.Districts.Select(item => item.TileId).ToArray();
             var tile = state.Tiles.First(item => item.CityId == city.Id && !occupied.Contains(item.Id));

@@ -214,13 +214,14 @@ namespace LittleCiv.Tests
             var fixture = CreateFixture(DistrictType.Military, includeDefender: false);
             var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
             var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            var startingGold = attackerCity.Gold;
             victimCity.StoredFood = 8;
             fixture.Attacker.TileId = fixture.TargetTile;
 
             var result = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             var tile = fixture.State.Tiles.Single(item => item.Id == fixture.TargetTile);
 
-            Assert.That(attackerCity.Gold, Is.EqualTo(3));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(3));
             Assert.That(victimCity.StoredFood, Is.EqualTo(5));
             Assert.That(result.PillageFoodReward, Is.EqualTo(3));
             Assert.That(tile.GroundFood, Is.EqualTo(3));
@@ -259,12 +260,13 @@ namespace LittleCiv.Tests
         {
             var fixture = CreateFixture(DistrictType.Commerce, includeDefender: false);
             var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            var startingGold = attackerCity.Gold;
             OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
 
             var repeated = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             Assert.That(repeated.PillageRewardGranted, Is.False);
-            Assert.That(attackerCity.Gold, Is.EqualTo(6));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(6));
 
             OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
             var repair = new GameCommand
@@ -279,7 +281,7 @@ namespace LittleCiv.Tests
 
             var afterRepair = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             Assert.That(afterRepair.PillageRewardGranted, Is.True);
-            Assert.That(attackerCity.Gold, Is.EqualTo(12));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(12));
         }
 
         private static Fixture CreateFixture(DistrictType type, bool includeDefender)
@@ -301,7 +303,7 @@ namespace LittleCiv.Tests
             });
             state.Tiles.Add(new TileState
             {
-                Id = targetTile, CityId = defenderCity, ControllerId = defenderPlayer
+                Id = targetTile, CityId = defenderCity, Q = 1, ControllerId = defenderPlayer
             });
             state.MapTopology.CityViews.Add(new CityMapView
             {

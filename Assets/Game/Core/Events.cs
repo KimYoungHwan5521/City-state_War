@@ -52,7 +52,21 @@ namespace LittleCiv.Core
         NuclearProjectProgressed = 45,
         NuclearProjectCompleted = 46,
         CultureInfluenceChanged = 47,
-        NeutralCultureResolved = 48
+        NeutralCultureResolved = 48,
+        NeutralResearchProgressed = 49,
+        NeutralResearchCompleted = 50,
+        NeutralTradeExecuted = 51,
+        NeutralTradeReservationApplied = 52,
+        NeutralCityOccupationStarted = 53,
+        NeutralCityIndependenceChanged = 54,
+        NeutralCityRebelled = 55,
+        NeutralOccupationYieldCollected = 56,
+        NeutralUnitsLevied = 57,
+        NeutralLevyReturned = 58,
+        NeutralLevyBidLost = 59,
+        NeutralLevyAuctionTied = 60,
+        NeutralLevyConditionalMoveCancelled = 61,
+        NeutralLevyTerminated = 62
     }
 
     [Serializable]

@@ -112,6 +112,7 @@ namespace LittleCiv.Tests
         public void SecondCitizenRequiresIrrigationAndFreeCitizen()
         {
             var fixture = CreateFixture();
+            fixture.City.Population = 2;
             var agriculture = AddDistrict(fixture, DistrictType.Agriculture, 1, 0);
             var command = new GameCommand
             {

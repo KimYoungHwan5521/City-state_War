@@ -16,13 +16,12 @@ namespace LittleCiv.Core
             var targetType = (DefenseFacilityType)command.PrimaryValue;
             if (targetType == DefenseFacilityType.None) return false;
             var player = state.Players.Find(item => item.Id == command.PlayerId);
-            if (player == null || (player.ResearchUnlocksEnabled &&
-                !player.UnlockedDefenseTypes.Contains(targetType))) return false;
             var city = FindCity(state, command.SubjectId);
             var tile = FindTile(state, command.TargetId);
-            if (city == null || tile == null || city.OwnerId != command.PlayerId ||
+            if (player == null || city == null || tile == null || city.OwnerId != command.PlayerId ||
                 tile.CityId != city.Id || tile.ControllerId != city.OwnerId ||
                 !HasCompletedDistrict(state, tile.Id)) return false;
+            if (!IsUnlocked(player, city, targetType)) return false;
 
             facility = FindAt(state, tile.Id);
             var current = facility == null ? DefenseFacilityType.None : facility.Type;
@@ -130,6 +129,22 @@ namespace LittleCiv.Core
 
         public static int ConstructionTurns(DefenseFacilityType type) => type == DefenseFacilityType.Wall ? 2 : type == DefenseFacilityType.Moat ? 4 : type == DefenseFacilityType.ModernDefense ? 8 : 0;
         public static int GoldCost(DefenseFacilityType type) => type == DefenseFacilityType.Wall ? 5 : type == DefenseFacilityType.Moat ? 10 : type == DefenseFacilityType.ModernDefense ? 20 : 0;
+
+        private static bool IsUnlocked(PlayerState player, CityState city, DefenseFacilityType type)
+        {
+            if (player.Slot != PlayerSlot.Neutral)
+                return !player.ResearchUnlocksEnabled || player.UnlockedDefenseTypes.Contains(type);
+            switch (type)
+            {
+                case DefenseFacilityType.Wall:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Fortification);
+                case DefenseFacilityType.Moat:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.AdvancedFortification);
+                case DefenseFacilityType.ModernDefense:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.ModernDefense);
+                default: return false;
+            }
+        }
 
         private static void ApplyTileBonus(GameState state, DefenseFacilityState facility)
         {

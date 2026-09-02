@@ -28,6 +28,8 @@ namespace LittleCiv.Core
                 var city = FindCity(state, district.CityId);
                 if (city == null || district.ControllerId == city.OwnerId ||
                     HasUnitOwnedBy(state, district.TileId, district.ControllerId)) continue;
+                if (district.Type == DistrictType.Government && city.OccupyingPlayerId.IsValid &&
+                    city.OccupyingPlayerId == district.ControllerId) continue;
                 district.ControllerId = city.OwnerId;
                 district.IsOperational = false;
                 district.IsPillaged = district.Type != DistrictType.Government;
@@ -50,6 +52,7 @@ namespace LittleCiv.Core
                 OccupyingPlayerId = occupyingPlayerId,
                 TileId = tileId
             };
+            if (NeutralLevyResolver.IsProtectedCityTile(state, occupyingPlayerId, tileId)) return result;
             var district = FindDistrict(state, tileId);
             if (district == null || district.ControllerId == occupyingPlayerId) return result;
             if (HasEnemyUnit(state, tileId, occupyingPlayerId)) return result;
@@ -81,9 +84,18 @@ namespace LittleCiv.Core
             }
             if (district.Type == DistrictType.Government && !state.IsGameOver)
             {
-                state.Victory = VictoryType.Conquest;
-                state.WinnerId = occupyingPlayerId;
-                result.ConquestVictoryTriggered = true;
+                if (IsNeutralCity(state, city))
+                {
+                    city.OccupyingPlayerId = occupyingPlayerId == city.OwnerId
+                        ? default(EntityId) : occupyingPlayerId;
+                    city.IndependenceProgress = 0;
+                }
+                else
+                {
+                    state.Victory = VictoryType.Conquest;
+                    state.WinnerId = occupyingPlayerId;
+                    result.ConquestVictoryTriggered = true;
+                }
             }
             return result;
         }
@@ -197,6 +209,13 @@ namespace LittleCiv.Core
                 if (state.Units[i].TileId == tileId && state.Units[i].OwnerId == playerId &&
                     state.Units[i].HitPoints > 0) return true;
             return false;
+        }
+
+        private static bool IsNeutralCity(GameState state, CityState city)
+        {
+            if (city == null) return false;
+            var owner = state.Players.Find(item => item.Id == city.OwnerId);
+            return owner != null && owner.Slot == PlayerSlot.Neutral;
         }
     }
 }

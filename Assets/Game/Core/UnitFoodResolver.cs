@@ -10,7 +10,8 @@ namespace LittleCiv.Core
         Ground = 2,
         OccupiedAgriculture = 3,
         SupplyUnit = 4,
-        HomeTerritory = 5
+        HomeTerritory = 5,
+        OccupiedNeutralCity = 6
     }
 
     public sealed class UnitFoodConsumptionRecord
@@ -80,8 +81,10 @@ namespace LittleCiv.Core
                     ? UnitFoodSource.Ground
                     : TryConsumeHomeTerritoryFood(state, unit, required)
                         ? UnitFoodSource.HomeTerritory
-                        : IsSuppliedByOccupiedAgriculture(state, unit)
+                    : IsSuppliedByOccupiedAgriculture(state, unit)
                         ? UnitFoodSource.OccupiedAgriculture
+                        : TryConsumeOccupiedNeutralCityFood(state, unit, required)
+                            ? UnitFoodSource.OccupiedNeutralCity
                         : ConsumePersonalFood(unit, required)
                             ? UnitFoodSource.Personal
                             : UnitFoodSource.None;
@@ -147,6 +150,20 @@ namespace LittleCiv.Core
                 return city != null && city.OwnerId != unit.OwnerId;
             }
             return false;
+        }
+
+        private static bool TryConsumeOccupiedNeutralCityFood(
+            GameState state, UnitState unit, int amount)
+        {
+            var tile = FindTile(state, unit.TileId);
+            var city = tile == null ? null : FindCity(state, tile.CityId);
+            if (city == null || city.OccupyingPlayerId != unit.OwnerId) return false;
+            var available = city.StoredFood + city.LastFoodProduction - city.Population -
+                            city.LastUnitFoodConsumption;
+            if (available < amount)
+                return false;
+            city.LastUnitFoodConsumption += amount;
+            return true;
         }
 
         private static bool ConsumePersonalFood(UnitState unit, int amount)

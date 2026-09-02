@@ -26,9 +26,22 @@ namespace LittleCiv.Tests
         [Test]
         public void Resolve_OrdersTradeBeforeMovementRegardlessOfInputOrder()
         {
-            var state = CreateState();
-            var move = Command(state, 20, GameCommandType.MoveUnit, state.Units[0].Id);
-            var trade = Command(state, 10, GameCommandType.Trade);
+            var state = PrototypeMatchFactory.Create(346);
+            var player = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == player.Id);
+            var neutral = state.Cities.First(item => item.NeutralSpecialization == NeutralCitySpecialization.Science &&
+                NeutralTradeQuoteResolver.Quote(state, player.Id, home.Id, item.Id).IsAvailable);
+            var move = new GameCommand
+            {
+                CommandId = new EntityId(20), PlayerId = player.Id, TurnNumber = state.TurnNumber,
+                Type = GameCommandType.MoveUnit, SubjectId = state.Units.First(item => item.OwnerId == player.Id).Id
+            };
+            var trade = new GameCommand
+            {
+                CommandId = new EntityId(10), PlayerId = player.Id, TurnNumber = state.TurnNumber,
+                Type = GameCommandType.Trade, SubjectId = home.Id, TargetId = neutral.Id,
+                PrimaryValue = (int)TileResourceType.Science
+            };
 
             var result = new TurnProcessor().Resolve(state, new[] { move, trade });
 
@@ -58,7 +71,8 @@ namespace LittleCiv.Tests
 
             Assert.That(result.Events.Any(item =>
                 item.Type == GameEventType.DefaultActionApplied &&
-                item.PrimaryValue == (int)DefaultActionType.UnitWaits), Is.False);
+                item.PrimaryValue == (int)DefaultActionType.UnitWaits &&
+                item.TargetId == state.Units[0].Id), Is.False);
         }
 
         [Test]
@@ -141,7 +155,8 @@ namespace LittleCiv.Tests
                 CommandId = new EntityId(21),
                 PlayerId = state.Players[1].Id,
                 TurnNumber = state.TurnNumber,
-                Type = GameCommandType.Trade
+                Type = GameCommandType.MoveUnit,
+                SubjectId = state.Units[1].Id
             };
 
             simulator.Planning.Reserve(playerOneCommand);
@@ -173,6 +188,11 @@ namespace LittleCiv.Tests
                 Type = UnitType.Militia,
                 HitPoints = 16,
                 CarriedFood = 6
+            });
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = playerTwo, TileId = state.AllocateId(),
+                Type = UnitType.Militia, HitPoints = 16, CarriedFood = 6
             });
             return state;
         }

@@ -43,6 +43,10 @@ namespace LittleCiv.Runtime
             new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<string, GameCommand> plannedFoodTransfers =
             new Dictionary<string, GameCommand>();
+        private readonly Dictionary<string, GameCommand> plannedNeutralTrades =
+            new Dictionary<string, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedLevyBids =
+            new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<GameEntityId, Vector3> visibleTilePositions =
             new Dictionary<GameEntityId, Vector3>();
         private GameState state;
@@ -77,6 +81,7 @@ namespace LittleCiv.Runtime
         private Texture2D routeTurnMarker;
         private bool showResearchPanel;
         private Vector2 researchScroll;
+        private int levyExtraBid;
 
         private void Start()
         {
@@ -383,6 +388,9 @@ namespace LittleCiv.Runtime
             plannedResearch.Clear();
             plannedCitizenAssignments.Clear();
             plannedFoodTransfers.Clear();
+            plannedNeutralTrades.Clear();
+            plannedLevyBids.Clear();
+            levyExtraBid = 0;
             selectedUnitId = default;
             selectedTileId = default;
             ConfigurePlanningPlayers();
@@ -913,6 +921,96 @@ namespace LittleCiv.Runtime
         private int CountPlannedDistricts(GameEntityId cityId)
         {
             return plannedDistricts.Values.Count(command => command.SubjectId == cityId);
+        }
+
+        private CityState FindActiveHomeCity()
+        {
+            return state.Cities.Find(item => item.OwnerId == activePlayerId);
+        }
+
+        private CityState FindNeutralCityForTile(GameEntityId tileId)
+        {
+            var tile = state.Tiles.Find(item => item.Id == tileId);
+            var city = tile == null ? null : state.Cities.Find(item => item.Id == tile.CityId);
+            var owner = city == null ? null : FindPlayer(city.OwnerId);
+            return owner != null && owner.Slot == PlayerSlot.Neutral ? city : null;
+        }
+
+        private static string NeutralTradeKey(GameEntityId cityId, TileResourceType resource)
+        {
+            return $"{cityId.Value}:{(int)resource}";
+        }
+
+        private void ReserveNeutralTrade(CityState neutralCity, TileResourceType resource)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Trade is unavailable during maneuver re-command.";
+                return;
+            }
+            var home = FindActiveHomeCity();
+            if (home == null) return;
+            var key = NeutralTradeKey(neutralCity.Id, resource);
+            if (plannedNeutralTrades.TryGetValue(key, out var previous))
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.Trade,
+                SubjectId = home.Id, TargetId = neutralCity.Id, PrimaryValue = (int)resource
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted)
+            {
+                plannedNeutralTrades[key] = command;
+                statusMessage = $"Trade with {neutralCity.Name} reserved.";
+            }
+            else statusMessage = $"Trade reservation failed: {result}.";
+        }
+
+        private void CancelNeutralTrade(CityState neutralCity, TileResourceType resource)
+        {
+            var key = NeutralTradeKey(neutralCity.Id, resource);
+            if (!plannedNeutralTrades.TryGetValue(key, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedNeutralTrades.Remove(key);
+            statusMessage = $"Trade with {neutralCity.Name} cancelled.";
+        }
+
+        private void ReserveLevyBid(CityState militaryCity, int basePrice)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "Levy bids are unavailable during maneuver re-command.";
+                return;
+            }
+            var home = FindActiveHomeCity();
+            if (home == null) return;
+            if (plannedLevyBids.TryGetValue(militaryCity.Id, out var previous))
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+            var affordableExtra = Mathf.Max(0, home.Gold - basePrice);
+            levyExtraBid = Mathf.Clamp(levyExtraBid, 0, affordableExtra);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.LevyBid,
+                SubjectId = home.Id, TargetId = militaryCity.Id, PrimaryValue = levyExtraBid
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted)
+            {
+                plannedLevyBids[militaryCity.Id] = command;
+                statusMessage = $"Levy bid of {basePrice + levyExtraBid} gold reserved.";
+            }
+            else statusMessage = $"Levy bid reservation failed: {result}.";
+        }
+
+        private void CancelLevyBid(CityState militaryCity)
+        {
+            if (!plannedLevyBids.TryGetValue(militaryCity.Id, out var command)) return;
+            simulator.Planning.Cancel(activePlayerId, command.CommandId);
+            plannedLevyBids.Remove(militaryCity.Id);
+            statusMessage = $"Levy bid for {militaryCity.Name} cancelled.";
         }
 
         private void ShowCities(IEnumerable<GameEntityId> cityIds)
@@ -1555,6 +1653,13 @@ namespace LittleCiv.Runtime
             GUI.Label(new Rect(x + 14f, yOffset + 10f, 390f, 24f),
                 $"Tile {selectedTileId} | Resource {resourceInfo} | {groundFoodInfo}");
 
+            var neutralCity = FindNeutralCityForTile(selectedTileId);
+            if (neutralCity != null)
+            {
+                DrawNeutralCityActions(x, yOffset, neutralCity);
+                return;
+            }
+
             if (plannedDistricts.TryGetValue(selectedTileId, out var planned))
             {
                 GUI.Label(new Rect(x + 14f, yOffset + 40f, 380f, 22f),
@@ -1597,6 +1702,141 @@ namespace LittleCiv.Runtime
             DrawDistrictBuildButton(x + 14f, yOffset + 172f, DistrictType.Military);
             GUI.enabled = true;
             DrawUnitsOnSelectedTile(x, yOffset + 220f);
+        }
+
+        private void DrawNeutralCityActions(float x, float y, CityState city)
+        {
+            var stage = NeutralCityRules.DevelopmentStage(state, city);
+            var playerOne = FindPlayer(PlayerSlot.PlayerOne);
+            var playerTwo = FindPlayer(PlayerSlot.PlayerTwo);
+            var subject = city.CultureSubjectToId.IsValid
+                ? FindPlayer(city.CultureSubjectToId)?.Slot.ToString() ?? city.CultureSubjectToId.ToString()
+                : "none";
+            var occupier = city.OccupyingPlayerId.IsValid
+                ? FindPlayer(city.OccupyingPlayerId)?.Slot.ToString() ?? city.OccupyingPlayerId.ToString()
+                : "none";
+            GUI.Label(new Rect(x + 14f, y + 40f, 380f, 22f),
+                $"NEUTRAL CITY {city.Name} | {city.NeutralSpecialization} | {stage}");
+            GUI.Label(new Rect(x + 14f, y + 64f, 380f, 22f),
+                $"Favor: P1 {NeutralCityRules.Favor(city, playerOne.Id)} | " +
+                $"P2 {NeutralCityRules.Favor(city, playerTwo.Id)} | Subject: {subject}");
+            var required = NeutralOccupationResolver.RequiredStrength(city);
+            var garrison = NeutralOccupationResolver.GarrisonStrength(state, city);
+            GUI.Label(new Rect(x + 14f, y + 88f, 380f, 22f),
+                $"Occupier: {occupier} | Garrison {garrison}/{required} | " +
+                $"Independence {city.IndependenceProgress}/2");
+
+            var home = FindActiveHomeCity();
+            if (home == null) return;
+            GUI.Label(new Rect(x + 14f, y + 116f, 380f, 22f),
+                $"{FindPlayer(activePlayerId).Slot} diplomacy orders");
+            if (city.NeutralSpecialization == NeutralCitySpecialization.Science ||
+                city.NeutralSpecialization == NeutralCitySpecialization.Culture)
+            {
+                DrawPurchaseTrade(x, y + 142f, city, home);
+            }
+            else if (city.NeutralSpecialization == NeutralCitySpecialization.Commerce)
+            {
+                DrawCommerceTrades(x, y + 142f, city, home);
+            }
+            else if (city.NeutralSpecialization == NeutralCitySpecialization.Military)
+            {
+                DrawLevyBid(x, y + 142f, city, home);
+            }
+            else GUI.Label(new Rect(x + 14f, y + 144f, 380f, 24f), "No specialization action available.");
+
+            DrawUnitsOnSelectedTile(x, y + 350f);
+        }
+
+        private void DrawPurchaseTrade(float x, float y, CityState city, CityState home)
+        {
+            var quote = NeutralTradeQuoteResolver.Quote(state, activePlayerId, home.Id, city.Id);
+            var receivedResource = city.NeutralSpecialization == NeutralCitySpecialization.Science
+                ? TileResourceType.Science : TileResourceType.Culture;
+            var route = FormatTradeRoute(quote.Route);
+            GUI.Label(new Rect(x + 14f, y, 380f, 22f),
+                quote.IsAvailable
+                    ? $"Buy {quote.ResourceAmount} {quote.ReceivedResource} for {quote.TotalGoldCost} gold"
+                    : $"Trade unavailable: {quote.Failure}");
+            GUI.Label(new Rect(x + 14f, y + 23f, 380f, 42f), route);
+            var key = NeutralTradeKey(city.Id, receivedResource);
+            var reserved = plannedNeutralTrades.ContainsKey(key);
+            GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && (quote.IsAvailable || reserved);
+            if (GUI.Button(new Rect(x + 14f, y + 68f, 376f, 30f),
+                    reserved ? "Cancel reserved trade" : "Reserve trade"))
+            {
+                if (reserved) CancelNeutralTrade(city, receivedResource);
+                else ReserveNeutralTrade(city, receivedResource);
+            }
+            GUI.enabled = true;
+        }
+
+        private void DrawCommerceTrades(float x, float y, CityState city, CityState home)
+        {
+            var resources = new[] { TileResourceType.Food, TileResourceType.Science, TileResourceType.Culture };
+            for (var index = 0; index < resources.Length; index++)
+            {
+                var resource = resources[index];
+                var quote = CommerceTradeQuoteResolver.Quote(state, activePlayerId, home.Id, city.Id, resource);
+                var rowY = y + (index * 54f);
+                var key = NeutralTradeKey(city.Id, resource);
+                var reserved = plannedNeutralTrades.ContainsKey(key);
+                GUI.Label(new Rect(x + 14f, rowY, 250f, 42f), quote.IsAvailable
+                    ? $"Sell {quote.RequiredResourceAmount} {resource} → {quote.NetGoldPayment} gold\n" +
+                      $"Have {quote.AvailableResourceAmount} | {FormatTradeRoute(quote.Route)}"
+                    : $"Sell {resource}: {quote.Failure}\n{FormatTradeRoute(quote.Route)}");
+                GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && (quote.IsAvailable || reserved);
+                if (GUI.Button(new Rect(x + 270f, rowY + 5f, 120f, 32f), reserved ? "Cancel" : "Reserve"))
+                {
+                    if (reserved) CancelNeutralTrade(city, resource);
+                    else ReserveNeutralTrade(city, resource);
+                }
+                GUI.enabled = true;
+            }
+        }
+
+        private void DrawLevyBid(float x, float y, CityState city, CityState home)
+        {
+            var quote = NeutralLevyResolver.Quote(state, activePlayerId, home.Id, city.Id);
+            GUI.Label(new Rect(x + 14f, y, 380f, 22f), quote.IsAvailable
+                ? $"Levy {quote.UnitIds.Count} units | value {quote.FullUnitValue} | base {quote.BasePrice} gold"
+                : $"Levy unavailable: {quote.Failure}");
+            GUI.Label(new Rect(x + 14f, y + 23f, 380f, 22f), FormatTradeRoute(quote.Route));
+            var affordableExtra = quote.IsAvailable ? Mathf.Max(0, home.Gold - quote.BasePrice) : 0;
+            levyExtraBid = Mathf.Clamp(levyExtraBid, 0, affordableExtra);
+            GUI.Label(new Rect(x + 14f, y + 52f, 155f, 28f),
+                $"Extra bid: {levyExtraBid} | total {quote.BasePrice + levyExtraBid}");
+            GUI.enabled = quote.IsAvailable && !plannedLevyBids.ContainsKey(city.Id);
+            if (GUI.Button(new Rect(x + 174f, y + 49f, 46f, 30f), "-")) levyExtraBid = Mathf.Max(0, levyExtraBid - 1);
+            if (GUI.Button(new Rect(x + 224f, y + 49f, 46f, 30f), "+")) levyExtraBid = Mathf.Min(affordableExtra, levyExtraBid + 1);
+            if (GUI.Button(new Rect(x + 274f, y + 49f, 54f, 30f), "+5")) levyExtraBid = Mathf.Min(affordableExtra, levyExtraBid + 5);
+            if (GUI.Button(new Rect(x + 332f, y + 49f, 58f, 30f), "Max")) levyExtraBid = affordableExtra;
+            var reserved = plannedLevyBids.TryGetValue(city.Id, out var bid);
+            GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && (quote.IsAvailable || reserved);
+            if (GUI.Button(new Rect(x + 14f, y + 86f, 376f, 30f), reserved
+                    ? $"Cancel bid ({quote.BasePrice + bid.PrimaryValue} gold)"
+                    : "Reserve levy bid"))
+            {
+                if (reserved) CancelLevyBid(city);
+                else ReserveLevyBid(city, quote.BasePrice);
+            }
+            GUI.enabled = true;
+            var levy = state.Levies.Find(item => item.MilitaryCityId == city.Id);
+            if (levy != null)
+                GUI.Label(new Rect(x + 14f, y + 122f, 380f, 42f),
+                    $"ACTIVE LEVY: {FindPlayer(levy.PlayerId)?.Slot} | {levy.Units.Count} units | " +
+                    $"returns before T{levy.EndTurnExclusive}");
+        }
+
+        private string FormatTradeRoute(TradeRouteResult route)
+        {
+            if (route == null) return "Route: not evaluated";
+            if (!route.IsReachable)
+                return route.BlockedCityIds.Count == 0
+                    ? "Route: unreachable"
+                    : $"Route: blocked by {string.Join(", ", route.BlockedCityIds)}";
+            var names = route.CityPath.Select(id => state.Cities.Find(city => city.Id == id)?.Name ?? id.ToString());
+            return $"Route {string.Join(" → ", names)} | distance {route.Distance} (+{route.AdditionalDistance})";
         }
 
         private void DrawDistrictActions(float x, float y, DistrictState district)

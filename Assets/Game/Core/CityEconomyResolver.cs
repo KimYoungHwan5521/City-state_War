@@ -90,12 +90,12 @@ namespace LittleCiv.Core
                     case DistrictType.Agriculture:
                         var agricultureBase = AgricultureFood;
                         var agricultureResource = resource == TileResourceType.Food ? AgricultureResourceBonus : 0;
-                        var agricultureResearch = HasResearch(player, ResearchType.Fertilizer) ? 1 : 0;
+                        var agricultureResearch = HasResearch(state, city, player, ResearchType.Fertilizer) ? 1 : 0;
                         result.Food.DistrictBase += agricultureBase;
                         result.Food.ResourceBonus += agricultureResource;
                         result.Food.ResearchBonus += agricultureResearch;
-                        var boosted = HasResearch(player, ResearchType.MechanizedAgriculture) ||
-                                      (HasResearch(player, ResearchType.Irrigation) && district.AssignedCitizens >= 2);
+                        var boosted = HasResearch(state, city, player, ResearchType.MechanizedAgriculture) ||
+                                      (HasResearch(state, city, player, ResearchType.Irrigation) && district.AssignedCitizens >= 2);
                         if (boosted)
                         {
                             var subtotal = agricultureBase + agricultureResource + agricultureResearch;
@@ -106,7 +106,7 @@ namespace LittleCiv.Core
                         result.Gold.DistrictBase += CommerceGold;
                         if (resource == TileResourceType.Commerce) result.Gold.ResourceBonus += CommerceResourceBonus;
                         result.Gold.AdjacencyBonus += adjacencyBonus;
-                        if (HasResearch(player, ResearchType.Currency)) result.Gold.ResearchBonus++;
+                        if (HasResearch(state, city, player, ResearchType.Currency)) result.Gold.ResearchBonus++;
                         break;
                     case DistrictType.Science:
                         result.Science.DistrictBase += ScienceResearch;
@@ -117,7 +117,7 @@ namespace LittleCiv.Core
                         result.Culture.DistrictBase += CultureOutput;
                         if (resource == TileResourceType.Culture) result.Culture.ResourceBonus += CultureResourceBonus;
                         result.Culture.AdjacencyBonus += adjacencyBonus;
-                        if (HasResearch(player, ResearchType.Printing)) result.Culture.ResearchBonus++;
+                        if (HasResearch(state, city, player, ResearchType.Printing)) result.Culture.ResearchBonus++;
                         break;
                 }
             }
@@ -177,7 +177,7 @@ namespace LittleCiv.Core
             }
             var owner = state.Players.Find(item => item.Id == city.OwnerId);
             var perNeighbor = source.Type == DistrictType.Commerce &&
-                              HasResearch(owner, ResearchType.Finance) ? 2 : 1;
+                              HasResearch(state, city, owner, ResearchType.Finance) ? 2 : 1;
             return count * perNeighbor;
         }
 
@@ -185,9 +185,9 @@ namespace LittleCiv.Core
             GameState state, CityState city, CityEconomyBreakdown result)
         {
             var player = state.Players.Find(item => item.Id == city.OwnerId);
-            if (HasResearch(player, ResearchType.EconomicAdministration))
+            if (HasResearch(state, city, player, ResearchType.EconomicAdministration))
                 result.Gold.MultiplierBonus = QuarterBonus(result.Gold);
-            if (HasResearch(player, ResearchType.MassMedia))
+            if (HasResearch(state, city, player, ResearchType.MassMedia))
                 result.Culture.MultiplierBonus = QuarterBonus(result.Culture);
         }
 
@@ -202,6 +202,13 @@ namespace LittleCiv.Core
         {
             return player != null && player.CompletedResearch != null &&
                    player.CompletedResearch.Contains(type);
+        }
+
+        private static bool HasResearch(GameState state, CityState city, PlayerState player, ResearchType type)
+        {
+            return player != null && player.Slot == PlayerSlot.Neutral
+                ? NeutralResearchResolver.HasResearch(city, type)
+                : HasResearch(player, type);
         }
 
         public static int AdjacencyBonusForDistrict(GameState state, DistrictState district)

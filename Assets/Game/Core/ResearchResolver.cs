@@ -93,6 +93,7 @@ namespace LittleCiv.Core
             players.Sort((left, right) => left.Id.CompareTo(right.Id));
             foreach (var player in players)
             {
+                if (player.Slot == PlayerSlot.Neutral) continue;
                 var cities = state.Cities.FindAll(item => item.OwnerId == player.Id);
                 cities.Sort((left, right) => left.Id.CompareTo(right.Id));
                 if (player.CurrentResearch == ResearchType.None)

@@ -113,6 +113,17 @@ namespace LittleCiv.Core
         public static int FoodCapacity(GameState state, UnitState unit)
         {
             if (unit == null) throw new ArgumentNullException(nameof(unit));
+            if (state != null)
+            {
+                var owner = state.Players.Find(item => item.Id == unit.OwnerId);
+                if (owner != null && owner.Slot == PlayerSlot.Neutral)
+                {
+                    var city = state.Cities.Find(item => item.Id == unit.HomeCityId);
+                    var percent = NeutralResearchResolver.HasResearch(city, ResearchType.Canning) ? 200 :
+                        NeutralResearchResolver.HasResearch(city, ResearchType.Salting) ? 150 : 100;
+                    return (FoodCapacity(unit.Type) * percent) / 100;
+                }
+            }
             return FoodCapacity(state, unit.OwnerId, unit.Type);
         }
 

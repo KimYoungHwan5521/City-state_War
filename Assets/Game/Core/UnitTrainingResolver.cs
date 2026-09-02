@@ -23,8 +23,7 @@ namespace LittleCiv.Core
             if (city == null || city.OwnerId != command.PlayerId || HasTraining(state, district.Id)) return false;
             var type = (UnitType)command.PrimaryValue;
             var player = state.Players.Find(item => item.Id == command.PlayerId);
-            if (player == null || (player.ResearchUnlocksEnabled &&
-                !player.UnlockedUnitTypes.Contains(type))) return false;
+            if (!IsUnlocked(player, city, type)) return false;
             var cost = UnitRules.TrainingGold(type);
             if (city.Gold < cost) return false;
 
@@ -39,6 +38,26 @@ namespace LittleCiv.Core
             };
             state.UnitTrainings.Add(training);
             return true;
+        }
+
+        private static bool IsUnlocked(PlayerState player, CityState city, UnitType type)
+        {
+            if (player == null) return false;
+            if (player.Slot != PlayerSlot.Neutral)
+                return !player.ResearchUnlocksEnabled || player.UnlockedUnitTypes.Contains(type);
+            switch (type)
+            {
+                case UnitType.Militia:
+                case UnitType.Supply: return true;
+                case UnitType.IronInfantry:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.IronWorking);
+                case UnitType.GunpowderInfantry:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Gunpowder);
+                case UnitType.MechanizedInfantry:
+                case UnitType.MotorizedSupply:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.Vehicles);
+                default: return false;
+            }
         }
 
         public static UnitTrainingAdvanceResult Advance(GameState state)
