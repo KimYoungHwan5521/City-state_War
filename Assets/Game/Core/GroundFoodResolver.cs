@@ -12,6 +12,40 @@ namespace LittleCiv.Core
 
     public static class GroundFoodResolver
     {
+        public static bool TryPickup(GameState state, GameCommand command, out int amount)
+        {
+            amount = 0;
+            if (state == null || command == null) return false;
+            var unit = state.Units.Find(item => item.Id == command.SubjectId &&
+                item.OwnerId == command.PlayerId && item.HitPoints > 0);
+            if (unit == null) return false;
+            var tile = FindTile(state, unit.TileId);
+            if (tile == null || tile.GroundFood <= 0) return false;
+            var capacity = UnitRules.FoodCapacity(state, unit);
+            var requested = command.PrimaryValue <= 0 ? tile.GroundFood : command.PrimaryValue;
+            amount = Math.Min(requested, Math.Min(tile.GroundFood, capacity - unit.CarriedFood));
+            if (amount <= 0) return false;
+            unit.CarriedFood += amount;
+            tile.GroundFood -= amount;
+            if (tile.GroundFood <= 0)
+            {
+                tile.GroundFood = 0;
+                tile.GroundFoodOwnerId = default;
+                tile.GroundFoodReturnTurn = 0;
+            }
+            return true;
+        }
+
+        public static int PickupBeforeDeparture(GameState state, UnitState unit)
+        {
+            if (state == null || unit == null) return 0;
+            var command = new GameCommand
+            {
+                PlayerId = unit.OwnerId, SubjectId = unit.Id, PrimaryValue = int.MaxValue
+            };
+            return TryPickup(state, command, out var amount) ? amount : 0;
+        }
+
         public static EntityId DepositAfterCombat(GameState state, EntityId tileId, int amount)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));

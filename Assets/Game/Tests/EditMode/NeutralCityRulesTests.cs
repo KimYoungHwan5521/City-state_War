@@ -47,7 +47,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void FavorClampsAndCulturalSubordinationForcesThreeThenReleasesToTwo()
+        public void FavorClampsAndMajorityRaisesFavorToFourThenReleasesToThree()
         {
             var state = PrototypeMatchFactory.Create(13002);
             var one = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
@@ -55,14 +55,15 @@ namespace LittleCiv.Tests
             var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
             var city = state.Cities.First(item => item.OwnerId == neutral.Id &&
                 item.NeutralSpecialization == NeutralCitySpecialization.Science);
-            NeutralCityRules.SetFavor(city, one.Id, -8);
-            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(-2));
+            NeutralCityRules.SetFavor(city, one.Id, -20);
+            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(-10));
+            NeutralCityRules.SetFavor(city, one.Id, 3);
             CityCultureRules.GetOrCreate(city, one.Id).PreferredCitizens = 3;
             state.Cities.Single(item => item.OwnerId == one.Id).LastCultureProduction = 30;
             state.Cities.Single(item => item.OwnerId == two.Id).LastCultureProduction = 0;
             city.LastCultureProduction = 1;
             NeutralCultureResolver.Advance(state);
-            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(3));
+            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(4));
             Assert.That(NeutralCityRules.Favor(city, two.Id), Is.EqualTo(0));
             var subjectQuote = NeutralTradeQuoteResolver.Quote(state, one.Id,
                 state.Cities.Single(item => item.OwnerId == one.Id).Id, city.Id);
@@ -74,7 +75,7 @@ namespace LittleCiv.Tests
             influence.ReversionProgress = 8;
             state.Cities.Single(item => item.OwnerId == one.Id).LastCultureProduction = 0;
             NeutralCultureResolver.Advance(state);
-            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(2));
+            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(3));
             var releasedQuote = NeutralTradeQuoteResolver.Quote(state, one.Id,
                 state.Cities.Single(item => item.OwnerId == one.Id).Id, city.Id);
             Assert.That(releasedQuote.ResourceAmount, Is.EqualTo(1));
@@ -82,7 +83,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void FavorThreeIsImpossibleWithoutMatchingCulturalSubordination()
+        public void FavorFourRequiresSubordinationAndHostilityClearsIt()
         {
             var state = PrototypeMatchFactory.Create(13004);
             var one = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
@@ -90,14 +91,16 @@ namespace LittleCiv.Tests
             var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
             var city = state.Cities.First(item => item.OwnerId == neutral.Id);
 
-            NeutralCityRules.SetFavor(city, one.Id, 3);
-            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(2));
+            NeutralCityRules.SetFavor(city, one.Id, 4);
+            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(3));
             city.CultureSubjectToId = two.Id;
-            NeutralCityRules.SetFavor(city, one.Id, 3);
-            NeutralCityRules.SetFavor(city, two.Id, 3);
+            NeutralCityRules.SetFavor(city, one.Id, 4);
+            NeutralCityRules.SetFavor(city, two.Id, 4);
 
-            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(2));
-            Assert.That(NeutralCityRules.Favor(city, two.Id), Is.EqualTo(3));
+            Assert.That(NeutralCityRules.Favor(city, one.Id), Is.EqualTo(3));
+            Assert.That(NeutralCityRules.Favor(city, two.Id), Is.EqualTo(4));
+            NeutralCityRules.SetFavor(city, two.Id, -10);
+            Assert.That(city.CultureSubjectToId.IsValid, Is.False);
         }
 
         [Test]

@@ -78,6 +78,7 @@ namespace LittleCiv.Core
 
             result.DroppedFood = SumDestroyedFood(state, result.DestroyedUnitIds);
             RemoveDestroyed(state, result.DestroyedUnitIds);
+            NeutralLevyResolver.ReconcileDestroyedUnits(state);
             if (attacker.HitPoints > 0 && !HasEnemyOnTile(state, request.TargetTileId, attacker.OwnerId))
             {
                 attacker.TileId = request.TargetTileId;

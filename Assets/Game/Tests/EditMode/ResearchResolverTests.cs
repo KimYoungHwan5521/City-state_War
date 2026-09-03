@@ -8,6 +8,39 @@ namespace LittleCiv.Tests
     public sealed class ResearchResolverTests
     {
         [Test]
+        public void SelfLearningAiRequiresColdWarUnlockAndCostsThreeHundredScience()
+        {
+            var state = PrototypeMatchFactory.Create(9800);
+            var player = state.Players.Find(item => item.Slot == PlayerSlot.PlayerOne);
+            player.CompletedResearch.Add(ResearchType.NuclearFission);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = player.Id,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.SelectResearch,
+                PrimaryValue = (int)ResearchType.SelfLearningAI
+            };
+
+            Assert.That(ResearchRules.Cost(ResearchType.SelfLearningAI), Is.EqualTo(300));
+            Assert.That(ResearchResolver.TrySelect(state, command, out _), Is.False);
+            player.HasUnlockedSelfLearningAI = true;
+            Assert.That(ResearchResolver.TrySelect(state, command, out _), Is.True);
+        }
+
+        [Test]
+        public void TestCheatCompletesAllStandardResearchButNotColdWarResearch()
+        {
+            var state = PrototypeMatchFactory.Create(9801);
+            var player = state.Players.Find(item => item.Slot == PlayerSlot.PlayerOne);
+
+            ResearchResolver.CompleteAllStandardResearchForTesting(state, player.Id);
+
+            Assert.That(player.CompletedResearch.Count, Is.EqualTo(19));
+            Assert.That(player.CompletedResearch.Contains(ResearchType.SelfLearningAI), Is.False);
+            Assert.That(player.UnlockedDistrictTypes, Does.Contain(DistrictType.NuclearFacility));
+            Assert.That(player.UnlockedUnitTypes, Does.Contain(UnitType.MechanizedInfantry));
+            Assert.That(player.UnlockedDefenseTypes, Does.Contain(DefenseFacilityType.ModernDefense));
+        }
+        [Test]
         public void SchoolCompletesOnThirdGovernmentScienceTurnAndUnlocksScienceDistrict()
         {
             var state = PrototypeMatchFactory.Create(8001);

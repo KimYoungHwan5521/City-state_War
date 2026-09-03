@@ -73,7 +73,7 @@ namespace LittleCiv.Core
             if (!IsNeutral(state, city)) return true;
             if (IsOccupiedByOpponent(state, city, playerId)) return true;
             if (IsOccupiedBy(state, city, playerId)) return false;
-            return NeutralCityRules.Favor(city, playerId) < 0;
+            return NeutralCityRules.Favor(city, playerId) <= -3;
         }
 
         private static bool IsNeutral(GameState state, CityState city)

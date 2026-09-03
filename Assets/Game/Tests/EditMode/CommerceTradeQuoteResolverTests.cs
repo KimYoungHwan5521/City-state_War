@@ -6,31 +6,33 @@ namespace LittleCiv.Tests
 {
     public sealed class CommerceTradeQuoteResolverTests
     {
-        [TestCase(-2, 3, 1, 2)]
-        [TestCase(-1, 3, 1, 2)]
+        [TestCase(-3, 3, 1, 2)]
+        [TestCase(-2, 2, 1, 1)]
         [TestCase(0, 2, 1, 1)]
-        [TestCase(1, 2, 1, 1)]
-        [TestCase(2, 1, 1, 1)]
-        [TestCase(3, 1, 2, 1)]
+        [TestCase(2, 2, 1, 1)]
+        [TestCase(3, 1, 1, 1)]
+        [TestCase(4, 1, 2, 1)]
         public void EarlyCommerceCityUsesFavorTable(
             int favor, int resource, int gold, int shippingRate)
         {
             var fixture = Create(13700 + favor, "N4");
             fixture.Source.StoredFood = 100;
-            if (favor == 3) fixture.Target.CultureSubjectToId = fixture.Player.Id;
+            if (favor == 4) fixture.Target.CultureSubjectToId = fixture.Player.Id;
             NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, favor);
 
             var quote = CommerceTradeQuoteResolver.Quote(fixture.State, fixture.Player.Id,
                 fixture.Source.Id, fixture.Target.Id, TileResourceType.Food);
 
             Assert.That(quote.IsAvailable, Is.True);
-            Assert.That(quote.RequiredResourceAmount, Is.EqualTo(resource));
+            Assert.That(quote.RequiredResourceAmount,
+                Is.EqualTo(resource + quote.Route.AdditionalDistance * shippingRate));
             Assert.That(quote.BaseGoldPayment, Is.EqualTo(gold));
-            Assert.That(quote.ShippingGoldPerAdditionalDistance, Is.EqualTo(shippingRate));
+            Assert.That(quote.ShippingResourcePerDistance, Is.EqualTo(shippingRate));
+            Assert.That(quote.NetGoldPayment, Is.EqualTo(gold));
         }
 
         [Test]
-        public void DistantCommerceTradeIsRejectedWhenShippingConsumesPayment()
+        public void DistanceRaisesRequiredResourceInsteadOfReducingGoldPayment()
         {
             var fixture = Create(13710, "N5");
             fixture.Source.StoredFood = 100;
@@ -39,9 +41,25 @@ namespace LittleCiv.Tests
                 fixture.Source.Id, fixture.Target.Id, TileResourceType.Food);
 
             Assert.That(quote.Route.AdditionalDistance, Is.GreaterThan(0));
-            Assert.That(quote.IsAvailable, Is.False);
-            Assert.That(quote.Failure, Is.EqualTo(CommerceTradeQuoteFailure.ShippingConsumesPayment));
-            Assert.That(quote.ShippingGoldCost, Is.GreaterThanOrEqualTo(quote.BaseGoldPayment));
+            Assert.That(quote.IsAvailable, Is.True);
+            Assert.That(quote.NetGoldPayment, Is.EqualTo(quote.BaseGoldPayment));
+            Assert.That(quote.RequiredResourceAmount,
+                Is.EqualTo(2 + quote.Route.AdditionalDistance * quote.ShippingResourcePerDistance));
+        }
+
+        [Test]
+        public void DistanceThreeCommerceTradeExchangesFourFoodForOneGold()
+        {
+            var fixture = Create(13713, "N5");
+            fixture.Source.StoredFood = 100;
+
+            var quote = CommerceTradeQuoteResolver.Quote(fixture.State, fixture.Player.Id,
+                fixture.Source.Id, fixture.Target.Id, TileResourceType.Food);
+
+            Assert.That(quote.Route.Distance, Is.EqualTo(3));
+            Assert.That(quote.IsAvailable, Is.True);
+            Assert.That(quote.RequiredResourceAmount, Is.EqualTo(4));
+            Assert.That(quote.NetGoldPayment, Is.EqualTo(1));
         }
 
         [Test]
@@ -58,7 +76,8 @@ namespace LittleCiv.Tests
             Assert.That(food.Failure, Is.EqualTo(CommerceTradeQuoteFailure.InsufficientFood));
             Assert.That(science.IsAvailable, Is.True);
             Assert.That(science.AvailableResourceAmount, Is.EqualTo(1));
-            Assert.That(science.RequiredResourceAmount, Is.EqualTo(2));
+            Assert.That(science.RequiredResourceAmount,
+                Is.EqualTo(2 + science.Route.AdditionalDistance * science.ShippingResourcePerDistance));
         }
 
         [Test]
@@ -68,13 +87,14 @@ namespace LittleCiv.Tests
             AddCommerceDistricts(fixture, 2);
             fixture.Source.StoredFood = 100;
             fixture.Target.CultureSubjectToId = fixture.Player.Id;
-            NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, 3);
+            NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, 4);
 
             var quote = CommerceTradeQuoteResolver.Quote(fixture.State, fixture.Player.Id,
                 fixture.Source.Id, fixture.Target.Id, TileResourceType.Food);
 
             Assert.That(quote.DevelopmentStage, Is.EqualTo(NeutralDevelopmentStage.Middle));
-            Assert.That(quote.RequiredResourceAmount, Is.EqualTo(2));
+            Assert.That(quote.RequiredResourceAmount,
+                Is.EqualTo(2 + quote.Route.AdditionalDistance * quote.ShippingResourcePerDistance));
             Assert.That(quote.BaseGoldPayment, Is.EqualTo(4));
             Assert.That(quote.NetGoldPayment, Is.EqualTo(4));
         }

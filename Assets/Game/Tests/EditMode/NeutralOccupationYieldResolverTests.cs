@@ -6,33 +6,26 @@ namespace LittleCiv.Tests
 {
     public sealed class NeutralOccupationYieldResolverTests
     {
-        [TestCase(NeutralCitySpecialization.Science, TileResourceType.Science)]
-        [TestCase(NeutralCitySpecialization.Culture, TileResourceType.Culture)]
-        [TestCase(NeutralCitySpecialization.Commerce, TileResourceType.Commerce)]
-        public void OccupiedEconomicCityProvidesTwoFourSixByDevelopmentStage(
-            NeutralCitySpecialization specialization, TileResourceType resource)
+        [TestCase(NeutralCitySpecialization.Science)]
+        [TestCase(NeutralCitySpecialization.Culture)]
+        [TestCase(NeutralCitySpecialization.Commerce)]
+        [TestCase(NeutralCitySpecialization.Military)]
+        public void OccupiedCityProvidesAllProducedResources(
+            NeutralCitySpecialization specialization)
         {
             var fixture = Create(14000 + (int)specialization, specialization);
             AddSpecializationDistricts(fixture, 2);
 
-            var record = NeutralOccupationYieldResolver.Collect(fixture.State).Single();
+            var records = NeutralOccupationYieldResolver.Collect(fixture.State);
 
-            Assert.That(record.ResourceType, Is.EqualTo(resource));
-            Assert.That(record.Amount, Is.EqualTo(4));
-            if (resource == TileResourceType.Science)
-                Assert.That(fixture.Home.ResearchPoints, Is.EqualTo(4));
-            if (resource == TileResourceType.Culture)
-                Assert.That(fixture.Home.LastCultureProduction, Is.EqualTo(4));
-            if (resource == TileResourceType.Commerce)
-                Assert.That(fixture.Home.Gold, Is.EqualTo(14));
-        }
-
-        [Test]
-        public void OccupiedMilitaryCityHasNoPeriodicResourceCollection()
-        {
-            var fixture = Create(14010, NeutralCitySpecialization.Military);
-
-            Assert.That(NeutralOccupationYieldResolver.Collect(fixture.State), Is.Empty);
+            Assert.That(records.Any(item => item.ResourceType == TileResourceType.Food), Is.True);
+            Assert.That(records.Any(item => item.ResourceType == TileResourceType.Commerce), Is.True);
+            Assert.That(records.Any(item => item.ResourceType == TileResourceType.Science), Is.True);
+            Assert.That(records.Any(item => item.ResourceType == TileResourceType.Culture), Is.True);
+            Assert.That(fixture.Home.LastFoodProduction, Is.GreaterThan(0));
+            Assert.That(fixture.Home.Gold, Is.GreaterThan(10));
+            Assert.That(fixture.Home.ResearchPoints, Is.GreaterThan(0));
+            Assert.That(fixture.Home.LastCultureProduction, Is.GreaterThan(0));
         }
 
         [Test]

@@ -44,6 +44,7 @@ namespace LittleCiv.Core
                 }
             }
             state.Units.RemoveAll(item => result.StarvedToDeathUnitIds.Contains(item.Id));
+            NeutralLevyResolver.ReconcileDestroyedUnits(state);
             return result;
         }
     }

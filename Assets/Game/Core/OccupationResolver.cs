@@ -18,6 +18,36 @@ namespace LittleCiv.Core
 
     public static class OccupationResolver
     {
+        public static List<OccupationResult> ResolveStandingPillages(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var results = new List<OccupationResult>();
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                var city = FindCity(state, district.CityId);
+                if (city == null || city.OccupyingPlayerId.IsValid ||
+                    district.Type == DistrictType.Government || district.IsPillaged ||
+                    district.RemainingConstructionTurns > 0 || district.ControllerId == city.OwnerId) continue;
+                var occupier = state.Units.Find(item => item.TileId == district.TileId &&
+                    item.OwnerId == district.ControllerId && item.HitPoints > 0 && item.RemainingMovement > 0);
+                if (occupier == null) continue;
+                district.IsPillaged = true;
+                var result = new OccupationResult
+                {
+                    OccupyingPlayerId = occupier.OwnerId, TileId = district.TileId,
+                    DistrictId = district.Id, DistrictType = district.Type,
+                    DistrictOccupied = true
+                };
+                ApplyPillageReward(state, district, city, occupier.OwnerId, result);
+                var owner = state.Players.Find(item => item.Id == city.OwnerId);
+                if (owner != null && owner.Slot == PlayerSlot.Neutral)
+                    NeutralCityRules.SetFavor(city, occupier.OwnerId, -10);
+                results.Add(result);
+            }
+            return results;
+        }
+
         public static List<EntityId> ReleaseVacatedDistricts(GameState state)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
@@ -31,8 +61,8 @@ namespace LittleCiv.Core
                 if (district.Type == DistrictType.Government && city.OccupyingPlayerId.IsValid &&
                     city.OccupyingPlayerId == district.ControllerId) continue;
                 district.ControllerId = city.OwnerId;
-                district.IsOperational = false;
-                district.IsPillaged = district.Type != DistrictType.Government;
+                district.IsOperational = district.RemainingConstructionTurns <= 0 &&
+                    !district.IsPillaged && !district.IsMaintenanceSuspended;
                 district.RemainingRepairTurns = 0;
                 var tile = FindTile(state, district.TileId);
                 if (tile != null) tile.ControllerId = city.OwnerId;
@@ -44,7 +74,8 @@ namespace LittleCiv.Core
         public static OccupationResult Resolve(
             GameState state,
             EntityId occupyingPlayerId,
-            EntityId tileId)
+            EntityId tileId,
+            bool canPillage = true)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             var result = new OccupationResult
@@ -58,20 +89,16 @@ namespace LittleCiv.Core
             if (HasEnemyUnit(state, tileId, occupyingPlayerId)) return result;
 
             var city = FindCity(state, district.CityId);
-            var grantsPillageReward = city != null && occupyingPlayerId != city.OwnerId &&
-                                      district.Type != DistrictType.Government && !district.IsPillaged;
+            var cityAlreadyOccupied = city != null && city.OccupyingPlayerId.IsValid;
+            var grantsPillageReward = city != null && !cityAlreadyOccupied && occupyingPlayerId != city.OwnerId &&
+                                      district.Type != DistrictType.Government && !district.IsPillaged &&
+                                      district.RemainingConstructionTurns <= 0 && canPillage;
             district.ControllerId = occupyingPlayerId;
             district.IsOperational = false;
             if (city != null && occupyingPlayerId != city.OwnerId)
             {
-                district.IsPillaged = true;
+                district.IsPillaged = grantsPillageReward;
                 district.RemainingRepairTurns = 0;
-            }
-            else if (city != null && !district.IsOperational &&
-                     district.RemainingConstructionTurns <= 0 && district.AssignedCitizens > 0)
-            {
-                // Also upgrades recaptured states created before explicit pillage data existed.
-                district.IsPillaged = true;
             }
             var tile = FindTile(state, tileId);
             if (tile != null) tile.ControllerId = occupyingPlayerId;
@@ -81,20 +108,25 @@ namespace LittleCiv.Core
             if (grantsPillageReward)
             {
                 ApplyPillageReward(state, district, city, occupyingPlayerId, result);
+                var owner = state.Players.Find(item => item.Id == city.OwnerId);
+                if (owner != null && owner.Slot == PlayerSlot.Neutral)
+                    NeutralCityRules.SetFavor(city, occupyingPlayerId, -10);
             }
             if (district.Type == DistrictType.Government && !state.IsGameOver)
             {
                 if (IsNeutralCity(state, city))
                 {
-                    city.OccupyingPlayerId = occupyingPlayerId == city.OwnerId
-                        ? default(EntityId) : occupyingPlayerId;
+                    if (occupyingPlayerId == city.OwnerId)
+                        RestoreCityControl(state, city);
+                    else
+                        city.OccupyingPlayerId = occupyingPlayerId;
                     city.IndependenceProgress = 0;
                 }
                 else
                 {
-                    state.Victory = VictoryType.Conquest;
-                    state.WinnerId = occupyingPlayerId;
-                    result.ConquestVictoryTriggered = true;
+                    // Player-capital conquest is resolved after all simultaneous movement,
+                    // so reciprocal captures exchange control and continue the match.
+                    result.ConquestVictoryTriggered = false;
                 }
             }
             return result;
@@ -216,6 +248,24 @@ namespace LittleCiv.Core
             if (city == null) return false;
             var owner = state.Players.Find(item => item.Id == city.OwnerId);
             return owner != null && owner.Slot == PlayerSlot.Neutral;
+        }
+
+        public static void RestoreCityControl(GameState state, CityState city)
+        {
+            if (state == null || city == null) return;
+            city.OccupyingPlayerId = default;
+            city.IndependenceProgress = 0;
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId != city.Id) continue;
+                district.ControllerId = city.OwnerId;
+                district.IsOperational = district.RemainingConstructionTurns <= 0 &&
+                    !district.IsPillaged && !district.IsMaintenanceSuspended &&
+                    (district.Type == DistrictType.Government || district.AssignedCitizens > 0);
+                var tile = FindTile(state, district.TileId);
+                if (tile != null) tile.ControllerId = city.OwnerId;
+            }
         }
     }
 }

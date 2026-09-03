@@ -135,6 +135,64 @@ namespace LittleCiv.Tests
             Assert.That(GameStateHasher.Compute(copy), Is.Not.EqualTo(GameStateHasher.Compute(fixture.State)));
         }
 
+        [Test]
+        public void EnemyUnitCanManuallyPickupGroundFoodRegardlessOfTemporaryOwner()
+        {
+            var fixture = CreateFixture(false);
+            fixture.State.Units.Remove(fixture.Defender);
+            fixture.Attacker.TileId = fixture.Tile.Id;
+            fixture.Attacker.CarriedFood = 1;
+            fixture.Tile.GroundFood = 4;
+            fixture.Tile.GroundFoodOwnerId = fixture.Defender.OwnerId;
+            var command = new GameCommand
+            {
+                PlayerId = fixture.Attacker.OwnerId, SubjectId = fixture.Attacker.Id,
+                PrimaryValue = 99
+            };
+
+            Assert.That(GroundFoodResolver.TryPickup(fixture.State, command, out var amount), Is.True);
+            Assert.That(amount, Is.EqualTo(4));
+            Assert.That(fixture.Attacker.CarriedFood, Is.EqualTo(5));
+            Assert.That(fixture.Tile.GroundFood, Is.Zero);
+        }
+
+        [Test]
+        public void UnitAutomaticallyFillsFromGroundFoodBeforeLeavingTile()
+        {
+            var fixture = CreateFixture(false);
+            fixture.State.Units.Remove(fixture.Defender);
+            fixture.Attacker.TileId = fixture.Tile.Id;
+            fixture.Attacker.CarriedFood = 4;
+            fixture.Tile.GroundFood = 5;
+            fixture.Tile.GroundFoodOwnerId = fixture.Defender.OwnerId;
+            var destination = new TileState
+            {
+                Id = fixture.State.AllocateId(), CityId = fixture.City.Id,
+                ControllerId = fixture.City.OwnerId, Q = 1, R = 0
+            };
+            fixture.State.Tiles.Add(destination);
+            fixture.State.MapTopology.CityViews.Add(new CityMapView
+            {
+                CityId = fixture.City.Id,
+                Tiles = new System.Collections.Generic.List<CityTilePlacement>
+                {
+                    new CityTilePlacement { TileId = fixture.Tile.Id, LocalQ = 0, LocalR = 0 },
+                    new CityTilePlacement { TileId = destination.Id, LocalQ = 1, LocalR = 0 }
+                }
+            });
+            fixture.Attacker.RemainingMovement = 2;
+            var command = new GameCommand
+            {
+                PlayerId = fixture.Attacker.OwnerId, SubjectId = fixture.Attacker.Id,
+                Path = new System.Collections.Generic.List<EntityId> { destination.Id }
+            };
+
+            MovementResolver.Resolve(fixture.State, command);
+
+            Assert.That(fixture.Attacker.CarriedFood, Is.EqualTo(6));
+            Assert.That(fixture.Tile.GroundFood, Is.EqualTo(3));
+        }
+
         private static Fixture CreateFixture(bool shared)
         {
             var state = GameState.CreateNew(7000);

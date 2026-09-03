@@ -11,6 +11,19 @@ namespace LittleCiv.Core
 
     public static class UnitTrainingResolver
     {
+        public static bool TryCancel(GameState state, EntityId playerId, EntityId trainingId)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var training = state.UnitTrainings.Find(item => item.Id == trainingId && item.OwnerId == playerId);
+            if (training == null) return false;
+            var district = FindDistrict(state, training.DistrictId);
+            var city = district == null ? null : FindCity(state, district.CityId);
+            if (city == null || city.OwnerId != playerId) return false;
+            city.Gold += UnitRules.TrainingGold(training.Type);
+            state.UnitTrainings.Remove(training);
+            return true;
+        }
+
         public static bool TryStart(GameState state, GameCommand command, out UnitTrainingState training)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));

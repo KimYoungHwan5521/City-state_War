@@ -8,7 +8,7 @@ namespace LittleCiv.Tests
     public sealed class VictoryResolverTests
     {
         [Test]
-        public void CultureBeatsScienceAndConquestWhenAllQualifyInSameTurn()
+        public void ScienceBeatsCultureAndConquestWhenAllQualifyInSameTurn()
         {
             var fixture = CreateConquestTurn();
             var culturallyDefeatedCity = fixture.State.Cities.Single(item =>
@@ -19,11 +19,11 @@ namespace LittleCiv.Tests
 
             var result = new TurnProcessor().Resolve(fixture.State, new[] { fixture.ConquestCommand });
 
-            Assert.That(fixture.State.Victory, Is.EqualTo(VictoryType.Culture));
-            Assert.That(fixture.State.WinnerId, Is.EqualTo(fixture.PlayerOne.Id));
+            Assert.That(fixture.State.Victory, Is.EqualTo(VictoryType.Science));
+            Assert.That(fixture.State.WinnerId, Is.EqualTo(fixture.PlayerTwo.Id));
             Assert.That(result.Events.Count(item => item.Type == GameEventType.VictoryTriggered), Is.EqualTo(1));
             Assert.That(result.Events.Single(item => item.Type == GameEventType.VictoryTriggered).PrimaryValue,
-                Is.EqualTo((int)VictoryType.Culture));
+                Is.EqualTo((int)VictoryType.Science));
         }
 
         [Test]
@@ -41,7 +41,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void SameTypeSimultaneousCandidatesUsePlayerSlotOrderDeterministically()
+        public void SimultaneousNuclearProjectsUnlockSelfLearningAiAndContinueGame()
         {
             var state = PrototypeMatchFactory.Create(9901);
             var one = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
@@ -51,12 +51,59 @@ namespace LittleCiv.Tests
 
             var winner = VictoryResolver.ResolveScience(state);
 
-            Assert.That(winner, Is.EqualTo(one.Id));
+            Assert.That(winner.IsValid, Is.False);
+            Assert.That(state.Victory, Is.EqualTo(VictoryType.None));
+            Assert.That(one.HasUnlockedSelfLearningAI, Is.True);
+            Assert.That(two.HasUnlockedSelfLearningAI, Is.True);
+        }
+
+        [Test]
+        public void SimultaneousSelfLearningAiCompletionIsDraw()
+        {
+            var state = PrototypeMatchFactory.Create(9903);
+            var players = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToList();
+            players[0].HasCompletedSelfLearningAI = true;
+            players[1].HasCompletedSelfLearningAI = true;
+
+            var winner = VictoryResolver.ResolveScience(state);
+
+            Assert.That(winner.IsValid, Is.False);
+            Assert.That(state.Victory, Is.EqualTo(VictoryType.Draw));
+            Assert.That(state.WinnerId.IsValid, Is.False);
+        }
+
+        [Test]
+        public void ColdWarPlayerWithOnlyUnpillagedNuclearFacilityWinsByScience()
+        {
+            var state = PrototypeMatchFactory.Create(9904);
+            var players = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToList();
+            var first = AddColdWarFacility(state, players[0], true);
+            AddColdWarFacility(state, players[1], false);
+
+            var winner = VictoryResolver.ResolveColdWarNuclearStrike(state);
+
+            Assert.That(first.IsPillaged, Is.True);
+            Assert.That(winner, Is.EqualTo(players[1].Id));
             Assert.That(state.Victory, Is.EqualTo(VictoryType.Science));
         }
 
         [Test]
-        public void ExistingHigherPriorityVictoryCannotBeOverwritten()
+        public void ColdWarContinuesWhenBothFacilitiesArePillagedOrBothAreRepaired()
+        {
+            var state = PrototypeMatchFactory.Create(9905);
+            var players = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToList();
+            var first = AddColdWarFacility(state, players[0], true);
+            var second = AddColdWarFacility(state, players[1], true);
+
+            Assert.That(VictoryResolver.ResolveColdWarNuclearStrike(state).IsValid, Is.False);
+            first.IsPillaged = false;
+            second.IsPillaged = false;
+            Assert.That(VictoryResolver.ResolveColdWarNuclearStrike(state).IsValid, Is.False);
+            Assert.That(state.Victory, Is.EqualTo(VictoryType.None));
+        }
+
+        [Test]
+        public void ExistingScienceVictoryCannotBeOverwrittenByCulture()
         {
             var state = PrototypeMatchFactory.Create(9902);
             var one = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
@@ -64,12 +111,34 @@ namespace LittleCiv.Tests
             one.HasMetCultureVictoryCondition = true;
             two.HasCompletedNuclearProject = true;
 
-            VictoryResolver.ResolveCulture(state);
-            var scienceWinner = VictoryResolver.ResolveScience(state);
+            VictoryResolver.ResolveScience(state);
+            var cultureWinner = VictoryResolver.ResolveCulture(state);
 
-            Assert.That(scienceWinner.IsValid, Is.False);
-            Assert.That(state.Victory, Is.EqualTo(VictoryType.Culture));
-            Assert.That(state.WinnerId, Is.EqualTo(one.Id));
+            Assert.That(cultureWinner.IsValid, Is.False);
+            Assert.That(state.Victory, Is.EqualTo(VictoryType.Science));
+            Assert.That(state.WinnerId, Is.EqualTo(two.Id));
+        }
+
+        [Test]
+        public void ReciprocalCapitalCaptureSwapsControlAndContinuesGame()
+        {
+            var state = PrototypeMatchFactory.Create(9906);
+            var players = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToList();
+            var firstCity = state.Cities.Single(item => item.OwnerId == players[0].Id);
+            var secondCity = state.Cities.Single(item => item.OwnerId == players[1].Id);
+            var firstGovernment = state.Districts.Single(item => item.CityId == firstCity.Id &&
+                item.Type == DistrictType.Government);
+            var secondGovernment = state.Districts.Single(item => item.CityId == secondCity.Id &&
+                item.Type == DistrictType.Government);
+            firstGovernment.ControllerId = players[1].Id;
+            secondGovernment.ControllerId = players[0].Id;
+
+            var winner = VictoryResolver.ResolveConquest(state);
+
+            Assert.That(winner.IsValid, Is.False);
+            Assert.That(state.IsGameOver, Is.False);
+            Assert.That(firstGovernment.ControllerId, Is.EqualTo(players[1].Id));
+            Assert.That(secondGovernment.ControllerId, Is.EqualTo(players[0].Id));
         }
 
         private static Fixture CreateConquestTurn()
@@ -129,6 +198,23 @@ namespace LittleCiv.Tests
                     TargetId = target.Id, Path = new List<EntityId> { target.Id }
                 }
             };
+        }
+
+        private static DistrictState AddColdWarFacility(GameState state, PlayerState player, bool pillaged)
+        {
+            player.HasCompletedNuclearProject = true;
+            player.HasUnlockedSelfLearningAI = true;
+            var city = state.Cities.Single(item => item.OwnerId == player.Id);
+            var tile = state.Tiles.First(item => item.CityId == city.Id &&
+                state.Districts.All(district => district.TileId != item.Id));
+            var district = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = tile.Id,
+                Type = DistrictType.NuclearFacility, ControllerId = player.Id,
+                AssignedCitizens = 1, IsOperational = !pillaged, IsPillaged = pillaged
+            };
+            state.Districts.Add(district);
+            return district;
         }
 
         private static DistrictState Government(GameState state, CityState city, TileState tile) =>

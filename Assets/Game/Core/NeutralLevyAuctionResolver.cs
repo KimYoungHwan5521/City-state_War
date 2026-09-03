@@ -58,8 +58,7 @@ namespace LittleCiv.Core
                 var valid = result.Bids.FindAll(item => item.IsValid);
                 valid.Sort(CompareBids);
                 if (valid.Count == 0) { results.Add(result); continue; }
-                if (valid.Count > 1 && valid[0].FinalPrice == valid[1].FinalPrice &&
-                    valid[0].Quote.Route.Distance == valid[1].Quote.Route.Distance)
+                if (valid.Count > 1 && valid[0].Command.PrimaryValue == valid[1].Command.PrimaryValue)
                 {
                     result.IsTie = true;
                     results.Add(result);
@@ -80,10 +79,8 @@ namespace LittleCiv.Core
 
         private static int CompareBids(LevyBidEvaluation left, LevyBidEvaluation right)
         {
-            var price = right.FinalPrice.CompareTo(left.FinalPrice);
+            var price = right.Command.PrimaryValue.CompareTo(left.Command.PrimaryValue);
             if (price != 0) return price;
-            var distance = left.Quote.Route.Distance.CompareTo(right.Quote.Route.Distance);
-            if (distance != 0) return distance;
             return left.Command.PlayerId.CompareTo(right.Command.PlayerId);
         }
     }

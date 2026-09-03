@@ -83,6 +83,53 @@ namespace LittleCiv.Tests
                 Is.EqualTo(UnitType.Militia));
         }
 
+        [Test]
+        public void ReturnedLevyOutsideHomeTerritoryReceivesWalkingReturnOrder()
+        {
+            var state = PrototypeMatchFactory.Create(13303);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            var unit = state.Units.Single(item => item.HomeCityId == city.Id);
+            var player = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var playerCity = state.Cities.Single(item => item.OwnerId == player.Id);
+            unit.TileId = state.Districts.Single(item => item.CityId == playerCity.Id &&
+                item.Type == DistrictType.Government).TileId;
+            unit.RemainingMovement = UnitRules.Movement(unit.Type);
+            unit.CreatedTurn = state.TurnNumber - 1;
+
+            var result = NeutralMilitaryResolver.IssueOrders(state);
+            var movement = result.Movements.Single(item => item.SubjectId == unit.Id);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+
+            Assert.That(movement.TargetId, Is.EqualTo(government.TileId));
+            Assert.That(movement.Path, Is.Not.Empty);
+        }
+
+        [Test]
+        public void HostileIntruderCausesNeutralDefensiveMovement()
+        {
+            var state = PrototypeMatchFactory.Create(13304);
+            var city = NeutralCity(state, NeutralCitySpecialization.Science);
+            var defender = state.Units.Single(item => item.HomeCityId == city.Id);
+            defender.RemainingMovement = UnitRules.Movement(defender.Type);
+            defender.CreatedTurn = state.TurnNumber - 1;
+            var intruderOwner = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            NeutralCityRules.SetFavor(city, intruderOwner.Id, -10);
+            var targetTile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable).TileId;
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = intruderOwner.Id,
+                HomeCityId = state.Cities.Single(item => item.OwnerId == intruderOwner.Id).Id,
+                TileId = targetTile, Type = UnitType.Militia, HitPoints = 16
+            });
+
+            var movement = NeutralMilitaryResolver.IssueOrders(state).Movements
+                .Single(item => item.SubjectId == defender.Id);
+
+            Assert.That(movement.TargetId, Is.EqualTo(targetTile));
+            Assert.That(movement.SecondaryValue, Is.EqualTo(1));
+        }
+
         private static CityState NeutralCity(GameState state, NeutralCitySpecialization specialization) =>
             state.Cities.First(item => item.NeutralSpecialization == specialization);
 

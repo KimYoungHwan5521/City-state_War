@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LittleCiv.Core
 {
@@ -8,10 +9,10 @@ namespace LittleCiv.Core
         CityProduction = 1,
         Maintenance = 2,
         ConstructionTrainingProjects = 3,
-        CultureAndConversion = 4,
-        CultureVictory = 5,
-        Research = 6,
-        ScienceVictory = 7,
+        Research = 4,
+        ScienceVictory = 5,
+        CultureAndConversion = 6,
+        CultureVictory = 7,
         FoodRecoveryStarvation = 8,
         Population = 9,
         TradeAndOrders = 10,
@@ -67,6 +68,8 @@ namespace LittleCiv.Core
                     primaryValue: phaseValue));
                 if (phase == TurnPhase.CityProduction)
                 {
+                    NeutralLevyResolver.ReconcileDestroyedUnits(state);
+                    NeutralCityRules.RecoverHostileRelations(state);
                     var levyReturns = NeutralLevyResolver.ReturnExpired(state);
                     for (var levyIndex = 0; levyIndex < levyReturns.Count; levyIndex++)
                     {
@@ -77,6 +80,14 @@ namespace LittleCiv.Core
                             returned.ReturnedUnits, returned.DisbandedUnits));
                     }
                     ResetUnitMovement(state);
+                    var standingPillages = OccupationResolver.ResolveStandingPillages(state);
+                    for (var pillageIndex = 0; pillageIndex < standingPillages.Count; pillageIndex++)
+                    {
+                        var pillage = standingPillages[pillageIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.DistrictPillaged,
+                            pillage.OccupyingPlayerId, pillage.DistrictId,
+                            pillage.PillagePrimaryReward, pillage.PillageFoodReward));
+                    }
                     CityEconomyResolver.ResolveProduction(state);
                     var appliedTrades = NeutralTradeResolver.ApplyPending(state);
                     for (var tradeIndex = 0; tradeIndex < appliedTrades.Count; tradeIndex++)
@@ -100,6 +111,7 @@ namespace LittleCiv.Core
                 if (phase == TurnPhase.Maintenance)
                 {
                     var maintenance = MaintenanceResolver.Resolve(state);
+                    NeutralLevyResolver.ReconcileDestroyedUnits(state);
                     for (var unitIndex = 0; unitIndex < maintenance.DisbandedUnits.Count; unitIndex++)
                     {
                         var disbanded = maintenance.DisbandedUnitRecords[unitIndex];
@@ -286,6 +298,14 @@ namespace LittleCiv.Core
                                 removedDistrictId));
                         }
                     }
+                    if (diminishedCities.Count > 0 && !state.IsGameOver)
+                    {
+                        CultureVictoryConditionResolver.UpdateCandidates(state);
+                        var famineCultureWinner = VictoryResolver.ResolveCulture(state);
+                        if (famineCultureWinner.IsValid)
+                            resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                                famineCultureWinner, primaryValue: (int)VictoryType.Culture));
+                    }
                 }
                 if (phase == TurnPhase.CultureAndConversion)
                 {
@@ -349,16 +369,33 @@ namespace LittleCiv.Core
 
                 if (phase == TurnPhase.ScienceVictory)
                 {
+                    var victoryBefore = state.Victory;
+                    var coldWarBefore = state.Players.Exists(item => item.HasUnlockedSelfLearningAI);
                     var winner = VictoryResolver.ResolveScience(state);
+                    if (!coldWarBefore && state.Players.Count(item =>
+                            item.Slot != PlayerSlot.Neutral && item.HasUnlockedSelfLearningAI) == 2)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.ColdWarStarted));
                     if (winner.IsValid)
                         resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
                             winner, primaryValue: (int)VictoryType.Science));
+                    else if (victoryBefore == VictoryType.None && state.Victory == VictoryType.Draw)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                            primaryValue: (int)VictoryType.Draw));
                 }
 
                 if (phase == TurnPhase.TradeAndOrders)
                 {
                     ResolveLevyAuctions(state, sortedCommands, seenCommandIds, resolution);
                     AddPlanningDefaults(state, sortedCommands, resolution);
+                    var neutralRepairs = NeutralCityDevelopmentResolver.StartAvailableRepairs(state);
+                    for (var repairIndex = 0; repairIndex < neutralRepairs.Count; repairIndex++)
+                    {
+                        var district = state.Districts.Find(item => item.Id == neutralRepairs[repairIndex]);
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.DistrictRepairStarted,
+                            neutralRepairs[repairIndex], district == null ? default : district.TileId,
+                            district == null ? 0 : district.RemainingRepairTurns));
+                    }
                     var neutralConstruction = NeutralCityDevelopmentResolver.StartAvailableConstruction(state);
                     for (var neutralIndex = 0; neutralIndex < neutralConstruction.Count; neutralIndex++)
                     {
@@ -384,6 +421,13 @@ namespace LittleCiv.Core
                             GameEventType.UnitTrainingStarted,
                             training.DistrictId, training.Id,
                             (int)training.Type, training.RemainingTurns));
+                    }
+                    for (var neutralIndex = 0; neutralIndex < neutralMilitary.Movements.Count; neutralIndex++)
+                    {
+                        var movement = neutralMilitary.Movements[neutralIndex];
+                        resolution.Commands.Add(GameCommandCopy.Clone(movement));
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.CommandAccepted,
+                            movement.PlayerId, movement.SubjectId, (int)GameCommandType.MoveUnit));
                     }
                     var neutralDefenses = NeutralDefenseResolver.StartAvailableConstruction(state);
                     for (var neutralIndex = 0; neutralIndex < neutralDefenses.Count; neutralIndex++)
@@ -426,14 +470,21 @@ namespace LittleCiv.Core
                     FinalizeAutomaticDefense(state, blockedUnits);
                 }
 
-                if (phase == TurnPhase.ConquestVictory && state.Victory == VictoryType.Conquest)
+                if (phase == TurnPhase.ConquestVictory && !state.IsGameOver)
                 {
-                    resolution.Events.Add(CreateEvent(
-                        turnNumber,
-                        GameEventType.VictoryTriggered,
-                        state.WinnerId,
-                        primaryValue: (int)VictoryType.Conquest));
+                    var nuclearWinner = VictoryResolver.ResolveColdWarNuclearStrike(state);
+                    if (nuclearWinner.IsValid)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                            nuclearWinner, primaryValue: (int)VictoryType.Science));
                 }
+                if (phase == TurnPhase.ConquestVictory && !state.IsGameOver)
+                {
+                    var conquestWinner = VictoryResolver.ResolveConquest(state);
+                    if (conquestWinner.IsValid)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
+                            conquestWinner, primaryValue: (int)VictoryType.Conquest));
+                }
+                if (state.IsGameOver && phase != TurnPhase.MovementCombatOccupation) break;
             }
 
             var terminatedLevies = NeutralLevyResolver.DisbandInvalidOrigins(state);
@@ -491,6 +542,7 @@ namespace LittleCiv.Core
                 UnitTrainingState startedTraining = null;
                 var loadedFood = 0;
                 var transferredFood = 0;
+                var pickedUpFood = 0;
                 UnitPromotionResult promotion = null;
                 DistrictState startedRepair = null;
                 DefenseFacilityState startedDefense = null;
@@ -536,6 +588,12 @@ namespace LittleCiv.Core
                 }
                 if (accepted && command.Type == GameCommandType.TransferFood &&
                     !UnitFoodResolver.TryTransfer(state, command, out transferredFood))
+                {
+                    accepted = false;
+                    validation = CommandValidationError.InvalidPayload;
+                }
+                if (accepted && command.Type == GameCommandType.PickupGroundFood &&
+                    !GroundFoodResolver.TryPickup(state, command, out pickedUpFood))
                 {
                     accepted = false;
                     validation = CommandValidationError.InvalidPayload;
@@ -662,6 +720,15 @@ namespace LittleCiv.Core
                             command.SubjectId,
                             command.TargetId,
                             transferredFood));
+                    }
+                    if (pickedUpFood > 0)
+                    {
+                        resolution.Events.Add(CreateEvent(
+                            state.TurnNumber,
+                            GameEventType.GroundFoodPickedUp,
+                            command.SubjectId,
+                            command.TargetId,
+                            pickedUpFood));
                     }
                     if (promotion != null)
                     {
@@ -810,7 +877,8 @@ namespace LittleCiv.Core
                     var occupation = OccupationResolver.Resolve(
                         state,
                         command.PlayerId,
-                        movement.FinalTileId);
+                        movement.FinalTileId,
+                        movedUnit != null && movedUnit.RemainingMovement > 0);
                     if (occupation.DistrictOccupied)
                     {
                         resolution.Events.Add(CreateEvent(
@@ -842,8 +910,11 @@ namespace LittleCiv.Core
                 if (movement.StopReason != MovementStopReason.Completed)
                 {
                     blockedUnits.Add(movement.UnitId);
+                    var anticipatedCombat = movement.StopReason == MovementStopReason.EnemyOccupied &&
+                                            command.SecondaryValue == 1;
                     if (movedUnit != null && movedUnit.ManeuverRecommandTurn <= 0)
-                        movedUnit.ManeuverRecommandTurn = state.TurnNumber + 1;
+                        movedUnit.ManeuverRecommandTurn = anticipatedCombat
+                            ? state.TurnNumber : state.TurnNumber + 1;
                     AddManeuverRequest(
                         resolution,
                         command,
@@ -1010,13 +1081,17 @@ namespace LittleCiv.Core
                     if (bid.IsValid) resolution.Commands.Add(GameCommandCopy.Clone(bid.Command));
                     for (var unitIndex = 0; unitIndex < bid.Quote.UnitIds.Count; unitIndex++)
                         unitIds.Add(bid.Quote.UnitIds[unitIndex]);
-                    if (bid.IsValid && !bid.Won)
+                    if (bid.IsValid && !bid.Won && !auction.IsTie)
                         resolution.Events.Add(CreateEvent(state.TurnNumber,
-                            auction.IsTie ? GameEventType.NeutralLevyAuctionTied :
-                                GameEventType.NeutralLevyBidLost,
+                            GameEventType.NeutralLevyBidLost,
                             bid.Command.PlayerId, auction.MilitaryCityId,
                             bid.FinalPrice, bid.Quote.Route == null ? 0 : bid.Quote.Route.Distance));
                 }
+                if (auction.IsTie)
+                    resolution.Events.Add(CreateEvent(state.TurnNumber,
+                        GameEventType.NeutralLevyAuctionTied,
+                        targetId: auction.MilitaryCityId,
+                        primaryValue: auction.Bids.Count));
                 if (auction.Levy != null)
                     resolution.Events.Add(CreateEvent(state.TurnNumber,
                         GameEventType.NeutralUnitsLevied,

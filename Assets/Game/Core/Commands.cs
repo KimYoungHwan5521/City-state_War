@@ -21,7 +21,8 @@ namespace LittleCiv.Core
         RepairDistrict = 13,
         StartDefenseFacility = 14,
         SetModernDefenseActive = 15,
-        StartNuclearProject = 16
+        StartNuclearProject = 16,
+        PickupGroundFood = 17
     }
 
     [Serializable]

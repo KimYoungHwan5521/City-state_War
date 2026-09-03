@@ -37,6 +37,7 @@ namespace LittleCiv.Core
                 case ResearchType.MechanizedAgriculture:
                 case ResearchType.ModernDefense: return 60;
                 case ResearchType.NuclearFission: return 100;
+                case ResearchType.SelfLearningAI: return 300;
                 default: return 0;
             }
         }
@@ -63,6 +64,7 @@ namespace LittleCiv.Core
                 case ResearchType.Canning: return ResearchType.Salting;
                 case ResearchType.AdvancedFortification: return ResearchType.Fortification;
                 case ResearchType.ModernDefense: return ResearchType.AdvancedFortification;
+                case ResearchType.SelfLearningAI: return ResearchType.NuclearFission;
                 default: return ResearchType.None;
             }
         }
@@ -79,6 +81,7 @@ namespace LittleCiv.Core
             if (selected == ResearchType.None || ResearchRules.Cost(selected) <= 0) return false;
             var player = state.Players.Find(item => item.Id == command.PlayerId);
             if (player == null || player.CompletedResearch.Contains(selected)) return false;
+            if (selected == ResearchType.SelfLearningAI && !player.HasUnlockedSelfLearningAI) return false;
             var prerequisite = ResearchRules.Prerequisite(selected);
             if (prerequisite != ResearchType.None && !player.CompletedResearch.Contains(prerequisite)) return false;
             player.CurrentResearch = selected;
@@ -134,6 +137,22 @@ namespace LittleCiv.Core
             return item == null ? 0 : item.Progress;
         }
 
+        public static void CompleteAllStandardResearchForTesting(GameState state, EntityId playerId)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var player = state.Players.Find(item => item.Id == playerId && item.Slot != PlayerSlot.Neutral);
+            if (player == null) return;
+            foreach (ResearchType type in Enum.GetValues(typeof(ResearchType)))
+            {
+                if (type == ResearchType.None || type == ResearchType.SelfLearningAI) continue;
+                if (!player.CompletedResearch.Contains(type)) player.CompletedResearch.Add(type);
+                var progress = GetProgress(player, type);
+                progress.Progress = ResearchRules.Cost(type);
+                ApplyUnlock(state, player, type);
+            }
+            player.CurrentResearch = ResearchType.None;
+        }
+
         private static ResearchProgressState GetProgress(PlayerState player, ResearchType type)
         {
             if (player.ResearchProgress == null) player.ResearchProgress = new List<ResearchProgressState>();
@@ -162,6 +181,7 @@ namespace LittleCiv.Core
                 case ResearchType.ModernDefense: Add(player.UnlockedDefenseTypes, DefenseFacilityType.ModernDefense); break;
                 case ResearchType.Salting: player.FoodCapacityPercent = Math.Max(player.FoodCapacityPercent, 150); break;
                 case ResearchType.Canning: player.FoodCapacityPercent = Math.Max(player.FoodCapacityPercent, 200); break;
+                case ResearchType.SelfLearningAI: player.HasCompletedSelfLearningAI = true; break;
                 case ResearchType.MechanizedAgriculture:
                     for (var index = 0; index < state.Districts.Count; index++)
                     {

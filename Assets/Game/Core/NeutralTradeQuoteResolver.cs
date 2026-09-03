@@ -73,19 +73,19 @@ namespace LittleCiv.Core
             quote.ReceivedResource = target.NeutralSpecialization == NeutralCitySpecialization.Science
                 ? TileResourceType.Science : TileResourceType.Culture;
             var scale = (int)quote.DevelopmentStage;
-            if (quote.Favor < 0)
+            if (quote.Favor <= -3)
             {
                 quote.BaseGoldCost = 3 * scale;
                 quote.ResourceAmount = scale;
                 quote.GoldPerAdditionalDistance = 2 * scale;
             }
-            else if (quote.Favor < 2)
+            else if (quote.Favor < 3)
             {
                 quote.BaseGoldCost = 2 * scale;
                 quote.ResourceAmount = scale;
                 quote.GoldPerAdditionalDistance = scale;
             }
-            else if (quote.Favor == 2)
+            else if (quote.Favor == 3)
             {
                 quote.BaseGoldCost = scale;
                 quote.ResourceAmount = scale;

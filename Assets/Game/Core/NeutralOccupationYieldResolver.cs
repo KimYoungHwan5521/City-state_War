@@ -24,41 +24,34 @@ namespace LittleCiv.Core
             {
                 var city = occupied[index];
                 var receiver = FindReceivingCity(state, city.OccupyingPlayerId);
-                var resource = ResourceFor(city.NeutralSpecialization);
-                if (receiver == null || resource == TileResourceType.None) continue;
-                var amount = 2 * (int)NeutralCityRules.DevelopmentStage(state, city);
-                switch (resource)
-                {
-                    case TileResourceType.Science:
-                        receiver.ResearchPoints += amount;
-                        receiver.LastScienceProduction += amount;
-                        break;
-                    case TileResourceType.Culture:
-                        receiver.LastCultureProduction += amount;
-                        break;
-                    case TileResourceType.Commerce:
-                        receiver.Gold += amount;
-                        receiver.LastGoldProduction += amount;
-                        break;
-                }
-                result.Add(new NeutralOccupationYieldRecord
-                {
-                    OccupiedCityId = city.Id, OccupyingPlayerId = city.OccupyingPlayerId,
-                    ReceivingCityId = receiver.Id, ResourceType = resource, Amount = amount
-                });
+                if (receiver == null) continue;
+                var production = CityEconomyResolver.CalculateOccupiedProduction(state, city);
+                Add(result, city, receiver, TileResourceType.Food, production.Food.Total);
+                Add(result, city, receiver, TileResourceType.Commerce, production.Gold.Total);
+                Add(result, city, receiver, TileResourceType.Science, production.Science.Total);
+                Add(result, city, receiver, TileResourceType.Culture, production.Culture.Total);
             }
             return result;
         }
 
-        private static TileResourceType ResourceFor(NeutralCitySpecialization specialization)
+        private static void Add(List<NeutralOccupationYieldRecord> result, CityState occupied,
+            CityState receiver, TileResourceType resource, int amount)
         {
-            switch (specialization)
+            if (amount <= 0) return;
+            switch (resource)
             {
-                case NeutralCitySpecialization.Science: return TileResourceType.Science;
-                case NeutralCitySpecialization.Culture: return TileResourceType.Culture;
-                case NeutralCitySpecialization.Commerce: return TileResourceType.Commerce;
-                default: return TileResourceType.None;
+                case TileResourceType.Food: receiver.LastFoodProduction += amount; break;
+                case TileResourceType.Commerce:
+                    receiver.Gold += amount; receiver.LastGoldProduction += amount; break;
+                case TileResourceType.Science:
+                    receiver.ResearchPoints += amount; receiver.LastScienceProduction += amount; break;
+                case TileResourceType.Culture: receiver.LastCultureProduction += amount; break;
             }
+            result.Add(new NeutralOccupationYieldRecord
+            {
+                OccupiedCityId = occupied.Id, OccupyingPlayerId = occupied.OccupyingPlayerId,
+                ReceivingCityId = receiver.Id, ResourceType = resource, Amount = amount
+            });
         }
 
         private static CityState FindReceivingCity(GameState state, EntityId ownerId)

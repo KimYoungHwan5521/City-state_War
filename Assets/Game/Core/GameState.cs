@@ -47,7 +47,7 @@ namespace LittleCiv.Core
         Currency = 9, Finance = 10, EconomicAdministration = 11,
         Irrigation = 12, Fertilizer = 13, MechanizedAgriculture = 14,
         Salting = 15, Canning = 16, Fortification = 17,
-        AdvancedFortification = 18, ModernDefense = 19
+        AdvancedFortification = 18, ModernDefense = 19, SelfLearningAI = 20
     }
 
     public enum TileResourceType
@@ -64,7 +64,8 @@ namespace LittleCiv.Core
         None = 0,
         Culture = 1,
         Science = 2,
-        Conquest = 3
+        Conquest = 3,
+        Draw = 4
     }
 
     public enum NeutralCitySpecialization
@@ -86,7 +87,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 27;
+        public const int CurrentSchemaVersion = 30;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -146,6 +147,8 @@ namespace LittleCiv.Core
         public int FoodCapacityPercent = 100;
         public bool ResearchUnlocksEnabled;
         public bool HasCompletedNuclearProject;
+        public bool HasUnlockedSelfLearningAI;
+        public bool HasCompletedSelfLearningAI;
         public bool HasMetCultureVictoryCondition;
     }
 
@@ -176,6 +179,10 @@ namespace LittleCiv.Core
         public int LastGoldProduction;
         public int LastScienceProduction;
         public int LastCultureProduction;
+        public int TestGovernmentFoodBonus;
+        public int TestGovernmentScienceBonus;
+        public int TestGovernmentCultureBonus;
+        public int TestGovernmentGoldBonus;
         public ResearchType NeutralCurrentResearch;
         public List<ResearchType> NeutralCompletedResearch = new List<ResearchType>();
         public List<ResearchProgressState> NeutralResearchProgress = new List<ResearchProgressState>();

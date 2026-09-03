@@ -32,8 +32,10 @@ namespace LittleCiv.Core
             {
                 var unit = state.Units[index];
                 if (unit.OwnerId != city.OccupyingPlayerId || unit.HitPoints <= 0) continue;
-                var tile = state.Tiles.Find(item => item.Id == unit.TileId);
-                if (tile != null && tile.CityId == city.Id) strength += UnitRules.Attack(unit.Type);
+                var government = state.Districts.Find(item => item.CityId == city.Id &&
+                    item.Type == DistrictType.Government);
+                if (government != null && unit.TileId == government.TileId)
+                    strength += UnitRules.Attack(unit.Type);
             }
             return strength;
         }
@@ -78,13 +80,7 @@ namespace LittleCiv.Core
             var government = state.Districts.Find(item => item.CityId == city.Id &&
                 item.Type == DistrictType.Government);
             if (government == null) return default;
-            government.ControllerId = city.OwnerId;
-            government.IsOperational = true;
-            government.IsPillaged = false;
-            var tile = state.Tiles.Find(item => item.Id == government.TileId);
-            if (tile != null) tile.ControllerId = city.OwnerId;
-            city.OccupyingPlayerId = default;
-            city.IndependenceProgress = 0;
+            OccupationResolver.RestoreCityControl(state, city);
             var unit = new UnitState
             {
                 Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,

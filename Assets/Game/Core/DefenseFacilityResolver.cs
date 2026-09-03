@@ -20,7 +20,7 @@ namespace LittleCiv.Core
             var tile = FindTile(state, command.TargetId);
             if (player == null || city == null || tile == null || city.OwnerId != command.PlayerId ||
                 tile.CityId != city.Id || tile.ControllerId != city.OwnerId ||
-                !HasCompletedDistrict(state, tile.Id)) return false;
+                !HasCompletedGovernment(state, tile.Id)) return false;
             if (!IsUnlocked(player, city, targetType)) return false;
 
             facility = FindAt(state, tile.Id);
@@ -151,7 +151,9 @@ namespace LittleCiv.Core
             var tile = FindTile(state, facility.TileId);
             if (tile != null) tile.DefenseBonusPercent = EffectiveBonus(facility);
         }
-        private static bool HasCompletedDistrict(GameState state, EntityId tileId) => state.Districts.Exists(item => item.TileId == tileId && item.RemainingConstructionTurns <= 0);
+        private static bool HasCompletedGovernment(GameState state, EntityId tileId) => state.Districts.Exists(item =>
+            item.TileId == tileId && item.Type == DistrictType.Government &&
+            item.RemainingConstructionTurns <= 0);
         private static DefenseFacilityState FindAt(GameState state, EntityId tileId) => state.DefenseFacilities.Find(item => item.TileId == tileId);
         private static DefenseFacilityState Find(GameState state, EntityId id) => state.DefenseFacilities.Find(item => item.Id == id);
         private static CityState FindCity(GameState state, EntityId id) => state.Cities.Find(item => item.Id == id);

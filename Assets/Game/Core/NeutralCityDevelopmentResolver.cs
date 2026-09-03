@@ -47,6 +47,31 @@ namespace LittleCiv.Core
             return result;
         }
 
+        public static List<EntityId> StartAvailableRepairs(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var result = new List<EntityId>();
+            var districts = new List<DistrictState>(state.Districts);
+            districts.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var index = 0; index < districts.Count; index++)
+            {
+                var district = districts[index];
+                var city = state.Cities.Find(item => item.Id == district.CityId);
+                var owner = city == null ? null : state.Players.Find(item => item.Id == city.OwnerId);
+                if (owner == null || owner.Slot != PlayerSlot.Neutral || !district.IsPillaged ||
+                    district.RemainingRepairTurns > 0 || district.ControllerId != city.OwnerId) continue;
+                var command = new GameCommand
+                {
+                    CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                    TurnNumber = state.TurnNumber, Type = GameCommandType.RepairDistrict,
+                    SubjectId = district.Id
+                };
+                if (DistrictConstructionResolver.TryStartRepair(state, command, out var repairing))
+                    result.Add(repairing.Id);
+            }
+            return result;
+        }
+
         public static DistrictType NextDistrictType(GameState state, CityState city)
         {
             if (!HasDistrict(state, city.Id, DistrictType.Science)) return DistrictType.Science;
@@ -91,18 +116,25 @@ namespace LittleCiv.Core
                     continue;
                 var tile = state.Tiles.Find(item => item.Id == placement.TileId);
                 if (tile == null) continue;
-                if (selected == null || BetterTile(state, placement, selected, desiredResource)) selected = placement;
+                if (selected == null || BetterTile(state, city, type, placement, selected, desiredResource))
+                    selected = placement;
             }
             return selected == null ? default : selected.TileId;
         }
 
-        private static bool BetterTile(GameState state, CityTilePlacement candidate,
-            CityTilePlacement current, TileResourceType desired)
+        private static bool BetterTile(GameState state, CityState city, DistrictType type,
+            CityTilePlacement candidate, CityTilePlacement current, TileResourceType desired)
         {
             var candidateTile = state.Tiles.Find(item => item.Id == candidate.TileId);
             var currentTile = state.Tiles.Find(item => item.Id == current.TileId);
             var candidateMatches = desired != TileResourceType.None && candidateTile.ResourceType == desired;
             var currentMatches = desired != TileResourceType.None && currentTile.ResourceType == desired;
+            if (type == DistrictType.Commerce || type == DistrictType.Science || type == DistrictType.Culture)
+            {
+                var candidateAdjacent = SameTypeNeighbors(state, city, type, candidate);
+                var currentAdjacent = SameTypeNeighbors(state, city, type, current);
+                if (candidateAdjacent != currentAdjacent) return candidateAdjacent > currentAdjacent;
+            }
             if (candidateMatches != currentMatches) return candidateMatches;
             if (desired == TileResourceType.None)
             {
@@ -116,6 +148,24 @@ namespace LittleCiv.Core
                 new HexCoord(current.LocalQ, current.LocalR));
             return candidateDistance != currentDistance ? candidateDistance < currentDistance :
                 candidate.TileId.CompareTo(current.TileId) < 0;
+        }
+
+        private static int SameTypeNeighbors(GameState state, CityState city, DistrictType type,
+            CityTilePlacement placement)
+        {
+            var view = state.MapTopology?.FindView(city.Id);
+            if (view?.Tiles == null) return 0;
+            var origin = new HexCoord(placement.LocalQ, placement.LocalR);
+            var count = 0;
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId != city.Id || district.Type != type) continue;
+                var other = view.Tiles.Find(item => item.TileId == district.TileId);
+                if (other != null && HexCoord.Distance(origin,
+                        new HexCoord(other.LocalQ, other.LocalR)) == 1) count++;
+            }
+            return count;
         }
 
         private static TileResourceType ResourceFor(DistrictType type)

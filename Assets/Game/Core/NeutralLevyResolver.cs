@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace LittleCiv.Core
 {
@@ -51,7 +52,7 @@ namespace LittleCiv.Core
                 return quote;
             }
             quote.Favor = NeutralCityRules.Favor(military, playerId);
-            if (quote.Favor < 0) { quote.Failure = LevyQuoteFailure.Hostile; return quote; }
+            if (quote.Favor <= -3) { quote.Failure = LevyQuoteFailure.Hostile; return quote; }
             if (military.OccupyingPlayerId.IsValid)
             { quote.Failure = LevyQuoteFailure.CityOccupied; return quote; }
             if (state.Levies.Exists(item => item.MilitaryCityId == militaryCityId))
@@ -62,14 +63,26 @@ namespace LittleCiv.Core
             var units = state.Units.FindAll(item => item.OwnerId == military.OwnerId &&
                 item.HomeCityId == military.Id && item.HitPoints > 0);
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
+            var government = state.Districts.Find(item => item.CityId == military.Id &&
+                item.Type == DistrictType.Government);
+            UnitState retained = null;
+            if (government != null)
+            {
+                retained = units.FindAll(item => item.TileId == government.TileId)
+                    .OrderByDescending(item => UnitRules.Attack(item.Type))
+                    .ThenByDescending(item => item.HitPoints)
+                    .ThenBy(item => item.Id)
+                    .FirstOrDefault();
+            }
             for (var index = 0; index < units.Count; index++)
             {
+                if (retained != null && units[index].Id == retained.Id) continue;
                 quote.UnitIds.Add(units[index].Id);
                 quote.FullUnitValue += UnitRules.TrainingGold(units[index].Type);
             }
             if (quote.UnitIds.Count == 0) { quote.Failure = LevyQuoteFailure.NoUnits; return quote; }
-            quote.BasePrice = quote.Favor >= 3 ? DivideRoundUp(quote.FullUnitValue, 4) :
-                quote.Favor >= 1 ? DivideRoundUp(quote.FullUnitValue, 2) : quote.FullUnitValue;
+            quote.BasePrice = quote.Favor >= 4 ? DivideRoundUp(quote.FullUnitValue, 4) :
+                quote.Favor >= 3 ? DivideRoundUp(quote.FullUnitValue, 2) : quote.FullUnitValue;
             if (payment.Gold < quote.BasePrice)
             { quote.Failure = LevyQuoteFailure.InsufficientGold; return quote; }
             quote.IsAvailable = true;
@@ -107,7 +120,7 @@ namespace LittleCiv.Core
             state.Levies.Add(levy);
             var military = state.Cities.Find(item => item.Id == militaryCityId);
             var favor = NeutralCityRules.Favor(military, playerId);
-            if (favor < 2) NeutralCityRules.SetFavor(military, playerId, favor + 1);
+            if (favor < 3) NeutralCityRules.SetFavor(military, playerId, favor + 1);
             return true;
         }
 
@@ -141,15 +154,32 @@ namespace LittleCiv.Core
                     }
                     unit.OwnerId = city.OwnerId;
                     unit.HomeCityId = leased.OriginalHomeCityId;
-                    unit.TileId = government.TileId;
                     unit.RemainingMovement = 0;
                     unit.HasAutomaticDefense = false;
+                    // Returning to a home city starts a fresh starvation grace period.
+                    unit.IsStarving = false;
                     record.ReturnedUnits++;
                 }
                 state.Levies.Remove(levy);
                 records.Add(record);
             }
             return records;
+        }
+
+        public static int ReconcileDestroyedUnits(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var removedLevies = 0;
+            for (var levyIndex = state.Levies.Count - 1; levyIndex >= 0; levyIndex--)
+            {
+                var levy = state.Levies[levyIndex];
+                levy.Units.RemoveAll(item => !state.Units.Exists(unit =>
+                    unit.Id == item.UnitId && unit.OwnerId == levy.PlayerId && unit.HitPoints > 0));
+                if (levy.Units.Count > 0) continue;
+                state.Levies.RemoveAt(levyIndex);
+                removedLevies++;
+            }
+            return removedLevies;
         }
 
         public static List<LevyReturnRecord> DisbandInvalidOrigins(GameState state)
@@ -187,8 +217,7 @@ namespace LittleCiv.Core
             if (tile == null) return false;
             var levy = state.Levies.Find(item => item.PlayerId == playerId &&
                 item.MilitaryCityId == tile.CityId && item.EndTurnExclusive > state.TurnNumber);
-            if (levy == null) return false;
-            return !movingUnitId.IsValid || !levy.Units.Exists(item => item.UnitId == movingUnitId);
+            return levy != null;
         }
 
         private static int DivideRoundUp(int value, int divisor) =>

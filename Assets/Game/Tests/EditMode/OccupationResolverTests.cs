@@ -102,7 +102,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void EmptyGovernmentImmediatelyTriggersConquestVictory()
+        public void EmptyGovernmentDefersConquestUntilFinalVictoryPhase()
         {
             var fixture = CreateFixture(DistrictType.Government, includeDefender: false);
 
@@ -111,9 +111,9 @@ namespace LittleCiv.Tests
                 fixture.AttackerPlayer,
                 fixture.TargetTile);
 
-            Assert.That(result.ConquestVictoryTriggered, Is.True);
-            Assert.That(fixture.State.Victory, Is.EqualTo(VictoryType.Conquest));
-            Assert.That(fixture.State.WinnerId, Is.EqualTo(fixture.AttackerPlayer));
+            Assert.That(result.ConquestVictoryTriggered, Is.False);
+            Assert.That(fixture.State.Victory, Is.EqualTo(VictoryType.None));
+            Assert.That(VictoryResolver.ResolveConquest(fixture.State), Is.EqualTo(fixture.AttackerPlayer));
         }
 
         [Test]
@@ -134,8 +134,8 @@ namespace LittleCiv.Tests
             });
 
             Assert.That(result.AttackerAdvanced, Is.True);
-            Assert.That(result.Occupation.ConquestVictoryTriggered, Is.True);
-            Assert.That(fixture.State.WinnerId, Is.EqualTo(fixture.AttackerPlayer));
+            Assert.That(result.Occupation.ConquestVictoryTriggered, Is.False);
+            Assert.That(VictoryResolver.ResolveConquest(fixture.State), Is.EqualTo(fixture.AttackerPlayer));
         }
 
         [Test]
@@ -171,6 +171,7 @@ namespace LittleCiv.Tests
         {
             var fixture = CreateFixture(DistrictType.Government, includeDefender: false);
             OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+            VictoryResolver.ResolveConquest(fixture.State);
 
             Assert.Throws<System.InvalidOperationException>(() =>
                 new TurnProcessor().Resolve(fixture.State, new List<GameCommand>()));

@@ -70,7 +70,7 @@ namespace LittleCiv.Core
             else return false;
 
             var favor = NeutralCityRules.Favor(target, command.PlayerId);
-            if (favor < 2) NeutralCityRules.SetFavor(target, command.PlayerId, favor + 1);
+            if (favor < 3) NeutralCityRules.SetFavor(target, command.PlayerId, favor + 1);
             return true;
         }
 

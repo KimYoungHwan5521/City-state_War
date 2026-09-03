@@ -20,6 +20,10 @@ namespace LittleCiv.Tests
                 .Select(item => item.PrimaryValue)
                 .ToArray();
             Assert.That(phases, Is.EqualTo(Enumerable.Range(1, 12).ToArray()));
+            Assert.That((int)TurnPhase.Research, Is.EqualTo(4));
+            Assert.That((int)TurnPhase.ScienceVictory, Is.EqualTo(5));
+            Assert.That((int)TurnPhase.CultureAndConversion, Is.EqualTo(6));
+            Assert.That((int)TurnPhase.CultureVictory, Is.EqualTo(7));
             Assert.That(state.TurnNumber, Is.EqualTo(2));
         }
 

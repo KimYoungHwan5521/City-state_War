@@ -28,8 +28,8 @@ namespace LittleCiv.Core
         public int RequiredResourceAmount;
         public int AvailableResourceAmount;
         public int BaseGoldPayment;
-        public int ShippingGoldPerAdditionalDistance;
-        public int ShippingGoldCost;
+        public int ShippingResourcePerDistance;
+        public int ShippingResourceCost;
         public int NetGoldPayment;
         public TradeRouteResult Route;
     }
@@ -77,38 +77,33 @@ namespace LittleCiv.Core
             quote.DevelopmentStage = NeutralCityRules.DevelopmentStage(state, target);
             quote.Favor = NeutralCityRules.Favor(target, playerId);
             var scale = (int)quote.DevelopmentStage;
-            if (quote.Favor < 0)
+            if (quote.Favor <= -3)
             {
                 quote.RequiredResourceAmount = 3 * scale;
                 quote.BaseGoldPayment = scale;
-                quote.ShippingGoldPerAdditionalDistance = 2 * scale;
+                quote.ShippingResourcePerDistance = 2 * scale;
             }
-            else if (quote.Favor < 2)
+            else if (quote.Favor < 3)
             {
                 quote.RequiredResourceAmount = 2 * scale;
                 quote.BaseGoldPayment = scale;
-                quote.ShippingGoldPerAdditionalDistance = scale;
+                quote.ShippingResourcePerDistance = scale;
             }
-            else if (quote.Favor == 2)
+            else if (quote.Favor == 3)
             {
                 quote.RequiredResourceAmount = scale;
                 quote.BaseGoldPayment = scale;
-                quote.ShippingGoldPerAdditionalDistance = scale;
+                quote.ShippingResourcePerDistance = scale;
             }
             else
             {
                 quote.RequiredResourceAmount = scale;
                 quote.BaseGoldPayment = 2 * scale;
-                quote.ShippingGoldPerAdditionalDistance = scale;
+                quote.ShippingResourcePerDistance = scale;
             }
-            quote.ShippingGoldCost = quote.Route.AdditionalDistance *
-                                     quote.ShippingGoldPerAdditionalDistance;
-            quote.NetGoldPayment = quote.BaseGoldPayment - quote.ShippingGoldCost;
-            if (quote.ShippingGoldCost >= quote.BaseGoldPayment)
-            {
-                quote.Failure = CommerceTradeQuoteFailure.ShippingConsumesPayment;
-                return quote;
-            }
+            quote.ShippingResourceCost = quote.Route.AdditionalDistance * quote.ShippingResourcePerDistance;
+            quote.RequiredResourceAmount += quote.ShippingResourceCost;
+            quote.NetGoldPayment = quote.BaseGoldPayment;
 
             quote.AvailableResourceAmount = AvailableAmount(state, source, offeredResource);
             if (offeredResource == TileResourceType.Food &&

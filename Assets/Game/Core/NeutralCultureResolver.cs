@@ -13,9 +13,19 @@ namespace LittleCiv.Core
         public EntityId SubjectToId;
     }
 
+    public sealed class NeutralCultureInfluenceBreakdown
+    {
+        public EntityId SourceCityId;
+        public int SourceCulture;
+        public int Distance;
+        public int DistancePenalty;
+        public int EffectiveInfluence;
+    }
+
     public static class NeutralCultureResolver
     {
         public const int BaseResistance = 2;
+        public const int DistancePenaltyPerTile = 3;
 
         public static List<NeutralCultureRecord> Advance(GameState state)
         {
@@ -35,11 +45,10 @@ namespace LittleCiv.Core
                 for (var playerIndex = 0; playerIndex < majorPlayers.Count; playerIndex++)
                 {
                     var player = majorPlayers[playerIndex];
-                    var home = FindHomeCity(state, player.Id);
-                    if (home != null) scores.Add(new Score
+                    if (FindHomeCity(state, player.Id) != null) scores.Add(new Score
                     {
                         CultureId = player.Id,
-                        Value = EffectiveInfluence(home, city)
+                        Value = AdjustedInfluence(state, player.Id, city)
                     });
                 }
                 scores.Sort(CompareScores);
@@ -79,25 +88,89 @@ namespace LittleCiv.Core
 
         public static int EffectiveInfluence(CityState playerCity, CityState neutralCity)
         {
+            if (playerCity == null || neutralCity == null) return 0;
             var distance = HexCoord.Distance(new HexCoord(playerCity.WorldQ, playerCity.WorldR),
                 new HexCoord(neutralCity.WorldQ, neutralCity.WorldR));
-            return playerCity.LastCultureProduction - Math.Max(0, distance - 1);
+            return playerCity.LastCultureProduction -
+                   Math.Max(0, distance - 1) * DistancePenaltyPerTile;
+        }
+
+        public static int EffectiveInfluence(GameState state, EntityId playerId, CityState neutralCity)
+        {
+            return InfluenceBreakdown(state, playerId, neutralCity).EffectiveInfluence;
+        }
+
+        public static NeutralCultureInfluenceBreakdown InfluenceBreakdown(
+            GameState state, EntityId playerId, CityState neutralCity)
+        {
+            var result = new NeutralCultureInfluenceBreakdown();
+            if (state == null || neutralCity == null || !playerId.IsValid) return result;
+            var home = FindHomeCity(state, playerId);
+            if (home != null) ConsiderSource(result, home, neutralCity);
+            for (var index = 0; index < state.Cities.Count; index++)
+            {
+                var relay = state.Cities[index];
+                if (relay.Id == neutralCity.Id || relay.CultureSubjectToId != playerId) continue;
+                ConsiderSource(result, relay, neutralCity);
+            }
+            return result;
+        }
+
+        private static void ConsiderSource(NeutralCultureInfluenceBreakdown result,
+            CityState source, CityState target)
+        {
+            var distance = HexCoord.Distance(new HexCoord(source.WorldQ, source.WorldR),
+                new HexCoord(target.WorldQ, target.WorldR));
+            var penalty = Math.Max(0, distance - 1) * DistancePenaltyPerTile;
+            var effective = source.LastCultureProduction - penalty;
+            if (result.SourceCityId.IsValid && effective <= result.EffectiveInfluence) return;
+            result.SourceCityId = source.Id;
+            result.SourceCulture = source.LastCultureProduction;
+            result.Distance = distance;
+            result.DistancePenalty = penalty;
+            result.EffectiveInfluence = effective;
+        }
+
+        public static int RelationshipResistance(CityState city, EntityId playerId)
+        {
+            var favor = NeutralCityRules.Favor(city, playerId);
+            if (favor <= -3) return 10;
+            return favor >= 3 ? 0 : 2;
+        }
+
+        public static int AdjustedInfluence(GameState state, EntityId playerId, CityState neutralCity)
+        {
+            return EffectiveInfluence(state, playerId, neutralCity) + BaseResistance -
+                   RelationshipResistance(neutralCity, playerId);
         }
 
         private static void UpdateSubject(CityState city, List<PlayerState> majorPlayers)
         {
             var previous = city.CultureSubjectToId;
-            city.CultureSubjectToId = default;
+            EntityId majority = default;
             for (var index = 0; index < majorPlayers.Count; index++)
             {
                 if (!CultureVictoryConditionResolver.HasForeignMajority(city, majorPlayers[index].Id)) continue;
-                city.CultureSubjectToId = majorPlayers[index].Id;
+                majority = majorPlayers[index].Id;
                 break;
             }
-            if (previous.IsValid && previous != city.CultureSubjectToId)
-                NeutralCityRules.SetFavor(city, previous, 2);
-            if (city.CultureSubjectToId.IsValid)
-                NeutralCityRules.SetFavor(city, city.CultureSubjectToId, 3);
+
+            if (previous.IsValid && previous != majority)
+            {
+                city.CultureSubjectToId = default;
+                NeutralCityRules.SetFavor(city, previous, 3);
+            }
+            if (!majority.IsValid) return;
+
+            var favor = NeutralCityRules.Favor(city, majority);
+            if (favor < 3)
+            {
+                city.CultureSubjectToId = default;
+                NeutralCityRules.SetFavor(city, majority, favor + 1);
+                return;
+            }
+            city.CultureSubjectToId = majority;
+            NeutralCityRules.SetFavor(city, majority, 4);
         }
 
         private static CityState FindHomeCity(GameState state, EntityId ownerId)

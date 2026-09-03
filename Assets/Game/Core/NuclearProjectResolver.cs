@@ -14,7 +14,7 @@ namespace LittleCiv.Core
     public static class NuclearProjectResolver
     {
         public const int StartGold = 10;
-        public const int ProjectTurns = 3;
+        public const int ProjectTurns = 5;
 
         public static bool TryStart(GameState state, GameCommand command, out NuclearProjectState project)
         {

@@ -8,6 +8,18 @@ namespace LittleCiv.Core
         public const int StandardConstructionTurns = 3;
         public const int NuclearConstructionTurns = 5;
 
+        public static bool TryCancel(GameState state, EntityId playerId, EntityId districtId)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var district = state.Districts.Find(item => item.Id == districtId &&
+                item.RemainingConstructionTurns > 0);
+            var city = district == null ? null : FindCity(state, district.CityId);
+            if (district == null || city == null || city.OwnerId != playerId ||
+                district.ControllerId != playerId || district.Type == DistrictType.Government) return false;
+            state.Districts.Remove(district);
+            return true;
+        }
+
         public static bool TryStart(GameState state, GameCommand command, out DistrictState district)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));

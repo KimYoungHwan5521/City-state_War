@@ -52,6 +52,8 @@ namespace LittleCiv.Tests
             }});
             processor.Resolve(state, new List<GameCommand>());
             processor.Resolve(state, new List<GameCommand>());
+            processor.Resolve(state, new List<GameCommand>());
+            processor.Resolve(state, new List<GameCommand>());
             var victoryTurn = processor.Resolve(state, new List<GameCommand>());
 
             Assert.That(state.Victory, Is.EqualTo(VictoryType.Science));

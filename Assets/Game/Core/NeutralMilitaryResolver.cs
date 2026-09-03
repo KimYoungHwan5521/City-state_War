@@ -7,6 +7,7 @@ namespace LittleCiv.Core
     {
         public readonly List<UnitPromotionResult> Promotions = new List<UnitPromotionResult>();
         public readonly List<UnitTrainingState> Trainings = new List<UnitTrainingState>();
+        public readonly List<GameCommand> Movements = new List<GameCommand>();
     }
 
     public static class NeutralMilitaryResolver
@@ -21,8 +22,91 @@ namespace LittleCiv.Core
                 var city = cities[cityIndex];
                 PromoteHomeUnits(state, city, result);
                 StartNeededTraining(state, city, result);
+                IssueDefensiveMovement(state, city, result);
             }
             return result;
+        }
+
+        private static void IssueDefensiveMovement(GameState state, CityState city, NeutralMilitaryResult result)
+        {
+            var government = state.Districts.Find(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            if (government == null) return;
+            var governmentThreatened = government.ControllerId != city.OwnerId;
+            var hostileTargets = state.Units.FindAll(item => item.OwnerId != city.OwnerId &&
+                item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
+                state.Tiles.Exists(tile => tile.Id == item.TileId && tile.CityId == city.Id));
+            hostileTargets.Sort((left, right) => left.Id.CompareTo(right.Id));
+            var hostileApproach = state.Units.Exists(item => item.OwnerId != city.OwnerId &&
+                item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
+                IsInOrAdjacentToCity(state, city, item.TileId));
+            var units = state.Units.FindAll(item => item.OwnerId == city.OwnerId &&
+                item.HomeCityId == city.Id && item.HitPoints > 0 && item.RemainingMovement > 0 &&
+                item.CreatedTurn != state.TurnNumber);
+            units.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var index = 0; index < units.Count; index++)
+            {
+                var unit = units[index];
+                var outsideHome = !state.Tiles.Exists(tile => tile.Id == unit.TileId && tile.CityId == city.Id);
+                EntityId target = default;
+                if (governmentThreatened || outsideHome || (hostileApproach && hostileTargets.Count == 0))
+                    target = government.TileId;
+                else if (hostileTargets.Count > 0) target = hostileTargets[0].TileId;
+                if (!target.IsValid || target == unit.TileId) continue;
+                var path = FindPath(state, unit, target);
+                if (path.Count == 0) continue;
+                result.Movements.Add(new GameCommand
+                {
+                    CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                    TurnNumber = state.TurnNumber, Type = GameCommandType.MoveUnit,
+                    SubjectId = unit.Id, TargetId = target, SecondaryValue = 1, Path = path
+                });
+            }
+        }
+
+        private static bool IsHostileToCity(GameState state, CityState city, EntityId playerId)
+        {
+            var player = state.Players.Find(item => item.Id == playerId);
+            return player != null && player.Slot != PlayerSlot.Neutral &&
+                   NeutralCityRules.Favor(city, playerId) <= -3;
+        }
+
+        private static bool IsInOrAdjacentToCity(GameState state, CityState city, EntityId tileId)
+        {
+            var tile = state.Tiles.Find(item => item.Id == tileId);
+            if (tile != null && tile.CityId == city.Id) return true;
+            for (var index = 0; index < state.Tiles.Count; index++)
+                if (state.Tiles[index].CityId == city.Id &&
+                    MapTraversal.AreAdjacent(state, tileId, state.Tiles[index].Id)) return true;
+            return false;
+        }
+
+        private static List<EntityId> FindPath(GameState state, UnitState unit, EntityId target)
+        {
+            var queue = new Queue<EntityId>();
+            var previous = new Dictionary<EntityId, EntityId>();
+            queue.Enqueue(unit.TileId);
+            previous[unit.TileId] = default;
+            while (queue.Count > 0)
+            {
+                var current = queue.Dequeue();
+                if (current == target) break;
+                for (var index = 0; index < state.Tiles.Count; index++)
+                {
+                    var next = state.Tiles[index].Id;
+                    if (previous.ContainsKey(next) || !MapTraversal.AreAdjacent(state, current, next)) continue;
+                    var enemy = state.Units.Exists(item => item.TileId == next &&
+                        item.OwnerId != unit.OwnerId && item.HitPoints > 0);
+                    if (enemy && next != target) continue;
+                    previous[next] = current;
+                    queue.Enqueue(next);
+                }
+            }
+            if (!previous.ContainsKey(target)) return new List<EntityId>();
+            var reversed = new List<EntityId>();
+            for (var cursor = target; cursor != unit.TileId; cursor = previous[cursor]) reversed.Add(cursor);
+            reversed.Reverse();
+            return reversed;
         }
 
         public static int CombatTarget(NeutralCitySpecialization specialization)

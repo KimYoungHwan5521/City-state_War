@@ -71,7 +71,8 @@ namespace LittleCiv.Core
                     break;
                 }
 
-                if (NeutralLevyResolver.IsProtectedCityTile(state, unit.OwnerId, nextTileId, unit.Id))
+                if (NeutralLevyResolver.IsProtectedCityTile(state, unit.OwnerId, nextTileId, unit.Id) &&
+                    HasEnemy(state, unit, nextTileId))
                 {
                     stopReason = MovementStopReason.LevyOriginProtected;
                     break;
@@ -89,6 +90,7 @@ namespace LittleCiv.Core
                     break;
                 }
 
+                GroundFoodResolver.PickupBeforeDeparture(state, unit);
                 unit.TileId = nextTileId;
                 unit.RemainingMovement--;
                 unit.HasAutomaticDefense = false;

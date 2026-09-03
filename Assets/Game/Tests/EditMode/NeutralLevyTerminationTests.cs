@@ -67,11 +67,20 @@ namespace LittleCiv.Tests
             var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
             var home = state.Cities.Single(item => item.OwnerId == player.Id);
             home.Gold = 100;
+            var military = state.Cities.First(item => item.OwnerId == neutral.Id &&
+                item.NeutralSpecialization == NeutralCitySpecialization.Military);
+            var government = state.Districts.Single(item =>
+                item.CityId == military.Id && item.Type == DistrictType.Government);
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = neutral.Id, HomeCityId = military.Id,
+                TileId = government.TileId, Type = UnitType.Militia,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia)
+            });
             return new Fixture
             {
                 State = state, Player = player, Home = home,
-                Military = state.Cities.First(item => item.OwnerId == neutral.Id &&
-                    item.NeutralSpecialization == NeutralCitySpecialization.Military)
+                Military = military
             };
         }
 

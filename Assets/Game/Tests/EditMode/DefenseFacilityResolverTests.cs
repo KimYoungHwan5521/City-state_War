@@ -94,6 +94,18 @@ namespace LittleCiv.Tests
             Assert.That(defender.HitPoints, Is.EqualTo(7));
         }
 
+        [Test]
+        public void FacilityCannotBeBuiltOutsideGovernmentDistrict()
+        {
+            var fixture = CreateFixture(100);
+            var other = fixture.State.Districts.First(item =>
+                item.CityId == fixture.City.Id && item.Type != DistrictType.Government);
+            fixture.Tile = fixture.State.Tiles.First(item => item.Id == other.TileId);
+
+            Assert.That(Start(fixture, DefenseFacilityType.Wall, out _), Is.False);
+            Assert.That(fixture.City.Gold, Is.EqualTo(100));
+        }
+
         private static Fixture CreateFixture(int gold)
         {
             var state = PrototypeMatchFactory.Create(915);

@@ -32,7 +32,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void PromotionRequiresExactNextUnlockedTypeAndEnoughGold()
+        public void PromotionCanSkipToHighestUnlockedTypeAndStillRequiresEnoughGold()
         {
             var fixture = CreateFixture(10001);
             UnitPromotionResult result;
@@ -40,11 +40,28 @@ namespace LittleCiv.Tests
                 fixture.State, Command(fixture, UnitType.IronInfantry), out result), Is.False);
             fixture.Player.UnlockedUnitTypes.Add(UnitType.GunpowderInfantry);
             Assert.That(UnitPromotionResolver.TryPromote(
-                fixture.State, Command(fixture, UnitType.GunpowderInfantry), out result), Is.False);
+                fixture.State, Command(fixture, UnitType.GunpowderInfantry), out result), Is.True);
+
+            fixture = CreateFixture(10004);
             fixture.Player.UnlockedUnitTypes.Add(UnitType.IronInfantry);
-            fixture.City.Gold = 3;
+            fixture.City.Gold = 2;
             Assert.That(UnitPromotionResolver.TryPromote(
                 fixture.State, Command(fixture, UnitType.IronInfantry), out result), Is.False);
+        }
+
+        [Test]
+        public void PromotionToLargerCapacityDoesNotFillNewFoodSpace()
+        {
+            var fixture = CreateFixture(10005);
+            fixture.Player.UnlockedUnitTypes.Add(UnitType.MechanizedInfantry);
+            fixture.Unit.CarriedFood = 2;
+            fixture.City.Gold = 100;
+            UnitPromotionResult result;
+
+            Assert.That(UnitPromotionResolver.TryPromote(
+                fixture.State, Command(fixture, UnitType.MechanizedInfantry), out result), Is.True);
+            Assert.That(fixture.Unit.CarriedFood, Is.EqualTo(2));
+            Assert.That(UnitRules.FoodCapacity(fixture.State, fixture.Unit), Is.GreaterThan(2));
         }
 
         [Test]

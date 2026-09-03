@@ -83,6 +83,8 @@ namespace LittleCiv.Core
                 Add(ref hash, item.FoodCapacityPercent);
                 Add(ref hash, item.ResearchUnlocksEnabled ? 1 : 0);
                 Add(ref hash, item.HasCompletedNuclearProject ? 1 : 0);
+                Add(ref hash, item.HasUnlockedSelfLearningAI ? 1 : 0);
+                Add(ref hash, item.HasCompletedSelfLearningAI ? 1 : 0);
                 Add(ref hash, item.HasMetCultureVictoryCondition ? 1 : 0);
             }
         }
@@ -110,6 +112,10 @@ namespace LittleCiv.Core
                 Add(ref hash, item.LastGoldProduction);
                 Add(ref hash, item.LastScienceProduction);
                 Add(ref hash, item.LastCultureProduction);
+                Add(ref hash, item.TestGovernmentFoodBonus);
+                Add(ref hash, item.TestGovernmentScienceBonus);
+                Add(ref hash, item.TestGovernmentCultureBonus);
+                Add(ref hash, item.TestGovernmentGoldBonus);
                 Add(ref hash, (int)item.NeutralCurrentResearch);
                 var neutralCompleted = item.NeutralCompletedResearch == null
                     ? new List<ResearchType>() : new List<ResearchType>(item.NeutralCompletedResearch);

@@ -43,6 +43,8 @@ namespace LittleCiv.Core
                     FoodCapacityPercent = item.FoodCapacityPercent,
                     ResearchUnlocksEnabled = item.ResearchUnlocksEnabled,
                     HasCompletedNuclearProject = item.HasCompletedNuclearProject,
+                    HasUnlockedSelfLearningAI = item.HasUnlockedSelfLearningAI,
+                    HasCompletedSelfLearningAI = item.HasCompletedSelfLearningAI,
                     HasMetCultureVictoryCondition = item.HasMetCultureVictoryCondition
                 });
             }
@@ -68,6 +70,10 @@ namespace LittleCiv.Core
                     LastUnitFoodConsumption = item.LastUnitFoodConsumption,
                     LastGoldProduction = item.LastGoldProduction,
                     LastScienceProduction = item.LastScienceProduction,
+                    TestGovernmentFoodBonus = item.TestGovernmentFoodBonus,
+                    TestGovernmentScienceBonus = item.TestGovernmentScienceBonus,
+                    TestGovernmentCultureBonus = item.TestGovernmentCultureBonus,
+                    TestGovernmentGoldBonus = item.TestGovernmentGoldBonus,
                     LastCultureProduction = item.LastCultureProduction,
                     NeutralCurrentResearch = item.NeutralCurrentResearch,
                     NeutralCompletedResearch = item.NeutralCompletedResearch == null

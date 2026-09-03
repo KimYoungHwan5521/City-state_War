@@ -15,7 +15,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void EqualPriceUsesShorterValidTradeDistance()
+        public void EqualPriceIsATieRegardlessOfTradeDistance()
         {
             var fixture = Create(14202, "N8");
             var result = NeutralLevyAuctionResolver.Resolve(fixture.State, new[]
@@ -24,8 +24,8 @@ namespace LittleCiv.Tests
                 Bid(fixture, fixture.Two, fixture.CityTwo, 0)
             }).Single();
 
-            Assert.That(result.IsTie, Is.False);
-            Assert.That(result.Levy.PlayerId, Is.EqualTo(fixture.Two.Id));
+            Assert.That(result.IsTie, Is.True);
+            Assert.That(result.Levy, Is.Null);
             Assert.That(result.Bids.Single(item => item.Command.PlayerId == fixture.One.Id)
                 .Quote.Route.Distance, Is.EqualTo(2));
             Assert.That(result.Bids.Single(item => item.Command.PlayerId == fixture.Two.Id)
@@ -57,6 +57,23 @@ namespace LittleCiv.Tests
             Assert.That(NeutralCityRules.Favor(fixture.Military, fixture.Two.Id), Is.Zero);
             Assert.That(fixture.State.Units.Single(item =>
                 item.HomeCityId == fixture.Military.Id).OwnerId, Is.EqualTo(fixture.Military.OwnerId));
+        }
+
+        [Test]
+        public void EqualExtraBidTiesEvenWhenRelationshipDiscountChangesTotalPrice()
+        {
+            var fixture = Create(14205, "N1");
+            NeutralCityRules.SetFavor(fixture.Military, fixture.One.Id, 3);
+
+            var result = NeutralLevyAuctionResolver.Resolve(fixture.State, new[]
+            {
+                Bid(fixture, fixture.One, fixture.CityOne, 0),
+                Bid(fixture, fixture.Two, fixture.CityTwo, 0)
+            }).Single();
+
+            Assert.That(result.Bids[0].FinalPrice, Is.Not.EqualTo(result.Bids[1].FinalPrice));
+            Assert.That(result.IsTie, Is.True);
+            Assert.That(result.Levy, Is.Null);
         }
 
         [Test]

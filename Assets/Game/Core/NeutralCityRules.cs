@@ -35,8 +35,8 @@ namespace LittleCiv.Core
         {
             var relation = FindRelation(city, playerId);
             if (relation == null) return 0;
-            var maximum = city.CultureSubjectToId == playerId ? 3 : 2;
-            return Math.Max(-2, Math.Min(maximum, relation.Favor));
+            var maximum = city.CultureSubjectToId == playerId ? 4 : 3;
+            return Math.Max(-10, Math.Min(maximum, relation.Favor));
         }
 
         public static NeutralRelationState GetOrCreateRelation(CityState city, EntityId playerId)
@@ -54,8 +54,24 @@ namespace LittleCiv.Core
 
         public static void SetFavor(CityState city, EntityId playerId, int favor)
         {
-            var maximum = city.CultureSubjectToId == playerId ? 3 : 2;
-            GetOrCreateRelation(city, playerId).Favor = Math.Max(-2, Math.Min(maximum, favor));
+            if (favor <= -3 && city.CultureSubjectToId == playerId)
+                city.CultureSubjectToId = default;
+            var maximum = city.CultureSubjectToId == playerId ? 4 : 3;
+            GetOrCreateRelation(city, playerId).Favor = Math.Max(-10, Math.Min(maximum, favor));
+        }
+
+        public static void RecoverHostileRelations(GameState state)
+        {
+            if (state == null || state.TurnNumber % 4 != 0) return;
+            for (var cityIndex = 0; cityIndex < state.Cities.Count; cityIndex++)
+            {
+                var city = state.Cities[cityIndex];
+                var owner = state.Players.Find(item => item.Id == city.OwnerId);
+                if (owner == null || owner.Slot != PlayerSlot.Neutral || city.NeutralRelations == null) continue;
+                for (var relationIndex = 0; relationIndex < city.NeutralRelations.Count; relationIndex++)
+                    if (city.NeutralRelations[relationIndex].Favor <= -3)
+                        city.NeutralRelations[relationIndex].Favor++;
+            }
         }
 
         public static DistrictType DistrictTypeFor(NeutralCitySpecialization specialization)

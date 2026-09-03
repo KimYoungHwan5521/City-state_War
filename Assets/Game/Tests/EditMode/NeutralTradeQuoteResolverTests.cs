@@ -6,17 +6,17 @@ namespace LittleCiv.Tests
 {
     public sealed class NeutralTradeQuoteResolverTests
     {
-        [TestCase(-2, 3, 1, 2)]
-        [TestCase(-1, 3, 1, 2)]
+        [TestCase(-3, 3, 1, 2)]
+        [TestCase(-2, 2, 1, 1)]
         [TestCase(0, 2, 1, 1)]
-        [TestCase(1, 2, 1, 1)]
-        [TestCase(2, 1, 1, 1)]
-        [TestCase(3, 1, 2, 1)]
+        [TestCase(2, 2, 1, 1)]
+        [TestCase(3, 1, 1, 1)]
+        [TestCase(4, 1, 2, 1)]
         public void EarlyScienceCityUsesFavorTable(
             int favor, int baseGold, int science, int distanceRate)
         {
             var fixture = Create(13600 + favor);
-            if (favor == 3) fixture.Target.CultureSubjectToId = fixture.Player.Id;
+            if (favor == 4) fixture.Target.CultureSubjectToId = fixture.Player.Id;
             NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, favor);
 
             var quote = NeutralTradeQuoteResolver.Quote(fixture.State, fixture.Player.Id,
@@ -36,7 +36,7 @@ namespace LittleCiv.Tests
             var fixture = Create(13610);
             AddSpecializationDistricts(fixture, 2);
             fixture.Target.CultureSubjectToId = fixture.Player.Id;
-            NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, 3);
+            NeutralCityRules.SetFavor(fixture.Target, fixture.Player.Id, 4);
 
             var quote = NeutralTradeQuoteResolver.Quote(fixture.State, fixture.Player.Id,
                 fixture.Source.Id, fixture.Target.Id);

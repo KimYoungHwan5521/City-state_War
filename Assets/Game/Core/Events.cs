@@ -66,7 +66,9 @@ namespace LittleCiv.Core
         NeutralLevyBidLost = 59,
         NeutralLevyAuctionTied = 60,
         NeutralLevyConditionalMoveCancelled = 61,
-        NeutralLevyTerminated = 62
+        NeutralLevyTerminated = 62,
+        ColdWarStarted = 63,
+        GroundFoodPickedUp = 64
     }
 
     [Serializable]

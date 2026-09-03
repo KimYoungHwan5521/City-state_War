@@ -40,7 +40,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void AllOccupierUnitsAcrossCityTerritoryContributeIncludingSupply()
+        public void OnlyUnitsOnGovernmentTileContributeToOccupationGarrison()
         {
             var fixture = Create(13902, NeutralCitySpecialization.Military);
             AddOccupierUnit(fixture, UnitType.Supply, fixture.Government.TileId);
@@ -49,9 +49,9 @@ namespace LittleCiv.Tests
             AddOccupierUnit(fixture, UnitType.Militia, otherTile.Id);
 
             Assert.That(NeutralOccupationResolver.GarrisonStrength(fixture.State, fixture.City),
-                Is.EqualTo(4));
+                Is.EqualTo(1));
             Assert.That(NeutralOccupationResolver.Resolve(fixture.State).Single().IndependenceProgress,
-                Is.Zero);
+                Is.EqualTo(1));
         }
 
         [Test]
@@ -114,6 +114,49 @@ namespace LittleCiv.Tests
             Assert.That(GameStateHasher.Compute(copy), Is.EqualTo(GameStateHasher.Compute(fixture.State)));
             copy.Cities.Single(item => item.Id == fixture.City.Id).IndependenceProgress = 0;
             Assert.That(GameStateHasher.Compute(copy), Is.Not.EqualTo(GameStateHasher.Compute(fixture.State)));
+        }
+
+        [Test]
+        public void RecapturingGovernmentRestoresEveryUnpillagedCompletedDistrict()
+        {
+            var fixture = Create(13907, NeutralCitySpecialization.Science);
+            var placement = fixture.State.MapTopology.FindView(fixture.City.Id).Tiles.First(item =>
+                item.IsBuildable && fixture.State.Districts.All(district => district.TileId != item.TileId));
+            var district = new DistrictState
+            {
+                Id = fixture.State.AllocateId(), CityId = fixture.City.Id, TileId = placement.TileId,
+                Type = DistrictType.Science, ControllerId = fixture.Player.Id,
+                AssignedCitizens = 1, IsOperational = false, IsPillaged = false
+            };
+            fixture.State.Districts.Add(district);
+
+            OccupationResolver.Resolve(fixture.State, fixture.City.OwnerId, fixture.Government.TileId);
+
+            Assert.That(fixture.City.OccupyingPlayerId.IsValid, Is.False);
+            Assert.That(district.ControllerId, Is.EqualTo(fixture.City.OwnerId));
+            Assert.That(district.IsOperational, Is.True);
+            Assert.That(district.IsPillaged, Is.False);
+        }
+
+        [Test]
+        public void DistrictInsideAlreadyOccupiedCityIsNotNewlyPillaged()
+        {
+            var fixture = Create(13908, NeutralCitySpecialization.Science);
+            var placement = fixture.State.MapTopology.FindView(fixture.City.Id).Tiles.First(item =>
+                item.IsBuildable && fixture.State.Districts.All(district => district.TileId != item.TileId));
+            var district = new DistrictState
+            {
+                Id = fixture.State.AllocateId(), CityId = fixture.City.Id, TileId = placement.TileId,
+                Type = DistrictType.Science, ControllerId = fixture.City.OwnerId,
+                AssignedCitizens = 1, IsOperational = true, IsPillaged = false
+            };
+            fixture.State.Districts.Add(district);
+
+            var result = OccupationResolver.Resolve(fixture.State, fixture.Player.Id, district.TileId, true);
+
+            Assert.That(result.DistrictOccupied, Is.True);
+            Assert.That(result.PillageRewardGranted, Is.False);
+            Assert.That(district.IsPillaged, Is.False);
         }
 
         private static Fixture Create(long seed, NeutralCitySpecialization specialization)

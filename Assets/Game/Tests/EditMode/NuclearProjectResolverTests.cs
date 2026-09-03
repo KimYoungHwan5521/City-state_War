@@ -26,6 +26,8 @@ namespace LittleCiv.Tests
             var fixture = CreateFixture();
             NuclearProjectResolver.TryStart(fixture.State, Command(fixture), out var project);
 
+            Assert.That(NuclearProjectResolver.Advance(fixture.State).Single().RemainingTurns, Is.EqualTo(4));
+            Assert.That(NuclearProjectResolver.Advance(fixture.State).Single().RemainingTurns, Is.EqualTo(3));
             Assert.That(NuclearProjectResolver.Advance(fixture.State).Single().RemainingTurns, Is.EqualTo(2));
             Assert.That(NuclearProjectResolver.Advance(fixture.State).Single().RemainingTurns, Is.EqualTo(1));
             var final = NuclearProjectResolver.Advance(fixture.State).Single();

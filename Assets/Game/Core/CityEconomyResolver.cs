@@ -48,12 +48,38 @@ namespace LittleCiv.Core
             result.UnitFoodConsumption = CountHomeSuppliedUnits(state, city);
             if (!HasOperationalGovernment(state, city)) return result;
 
-            result.Food.Government = GovernmentFood;
-            result.Gold.Government = GovernmentGold;
-            result.Science.Government = GovernmentScience;
-            result.Culture.Government = GovernmentCulture;
+            result.Food.Government = Math.Max(0, GovernmentFood + city.TestGovernmentFoodBonus);
+            result.Gold.Government = Math.Max(0, GovernmentGold + city.TestGovernmentGoldBonus);
+            result.Science.Government = Math.Max(0, GovernmentScience + city.TestGovernmentScienceBonus);
+            result.Culture.Government = Math.Max(0, GovernmentCulture + city.TestGovernmentCultureBonus);
             AddDistrictProduction(state, city, result);
             ApplyCityResearchMultipliers(state, city, result);
+            return result;
+        }
+
+        public static CityEconomyBreakdown CalculateOccupiedProduction(GameState state, CityState city)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (city == null) throw new ArgumentNullException(nameof(city));
+            var controllers = new EntityId[state.Districts.Count];
+            var operational = new bool[state.Districts.Count];
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                controllers[index] = state.Districts[index].ControllerId;
+                operational[index] = state.Districts[index].IsOperational;
+                if (state.Districts[index].CityId != city.Id) continue;
+                state.Districts[index].ControllerId = city.OwnerId;
+                state.Districts[index].IsOperational = state.Districts[index].RemainingConstructionTurns <= 0 &&
+                    !state.Districts[index].IsPillaged && !state.Districts[index].IsMaintenanceSuspended &&
+                    (state.Districts[index].Type == DistrictType.Government ||
+                     state.Districts[index].AssignedCitizens > 0);
+            }
+            var result = CalculateBreakdown(state, city);
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                state.Districts[index].ControllerId = controllers[index];
+                state.Districts[index].IsOperational = operational[index];
+            }
             return result;
         }
 

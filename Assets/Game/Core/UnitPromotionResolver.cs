@@ -25,7 +25,7 @@ namespace LittleCiv.Core
             if (unit == null || player == null || unit.OwnerId != command.PlayerId ||
                 unit.RemainingMovement <= 0) return false;
             var promotedType = (UnitType)command.PrimaryValue;
-            if (!IsNextType(unit.Type, promotedType)) return false;
+            if (!IsHigherTypeInSameBranch(unit.Type, promotedType)) return false;
 
             var tile = FindTile(state, unit.TileId);
             var city = tile == null ? null : FindCity(state, tile.CityId);
@@ -36,10 +36,13 @@ namespace LittleCiv.Core
             if (cost < 0 || city.Gold < cost) return false;
 
             var previousType = unit.Type;
+            var previousFood = unit.CarriedFood;
             var previousMaximum = UnitRules.MaximumHitPoints(previousType);
             var promotedMaximum = UnitRules.MaximumHitPoints(promotedType);
             unit.HitPoints = Math.Max(1, (unit.HitPoints * promotedMaximum) / previousMaximum);
             unit.Type = promotedType;
+            // Promotion changes equipment, not the food already loaded on the unit.
+            unit.CarriedFood = Math.Min(previousFood, UnitRules.FoodCapacity(state, unit));
             unit.RemainingMovement = 0;
             unit.HasAutomaticDefense = false;
             city.Gold -= cost;
@@ -71,16 +74,12 @@ namespace LittleCiv.Core
             }
         }
 
-        private static bool IsNextType(UnitType current, UnitType target)
+        private static bool IsHigherTypeInSameBranch(UnitType current, UnitType target)
         {
-            switch (current)
-            {
-                case UnitType.Militia: return target == UnitType.IronInfantry;
-                case UnitType.IronInfantry: return target == UnitType.GunpowderInfantry;
-                case UnitType.GunpowderInfantry: return target == UnitType.MechanizedInfantry;
-                case UnitType.Supply: return target == UnitType.MotorizedSupply;
-                default: return false;
-            }
+            if (current == UnitType.Supply) return target == UnitType.MotorizedSupply;
+            if (current == UnitType.MotorizedSupply) return false;
+            return current <= UnitType.MechanizedInfantry && target <= UnitType.MechanizedInfantry &&
+                   (int)target > (int)current;
         }
 
         private static UnitState FindUnit(GameState state, EntityId id)
