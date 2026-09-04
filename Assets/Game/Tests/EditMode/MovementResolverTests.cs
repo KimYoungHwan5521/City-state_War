@@ -118,6 +118,29 @@ namespace LittleCiv.Tests
             Assert.That(unit.HasAutomaticDefense, Is.True);
         }
 
+        [Test]
+        public void TurnProcessor_CapacityBlockCreatesVisibleManeuverRecommand()
+        {
+            var state = PrototypeMatchFactory.Create(107);
+            var movingUnit = state.Units[0];
+            var destination = PathFromGovernment(state, movingUnit.TileId, 1)[0];
+            for (var index = 0; index < 3; index++)
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = movingUnit.OwnerId,
+                    HomeCityId = movingUnit.HomeCityId, TileId = destination,
+                    Type = UnitType.Militia, HitPoints = 16, CarriedFood = 6
+                });
+
+            var result = new TurnProcessor().Resolve(state,
+                new[] { Move(state, movingUnit, new List<EntityId> { destination }) });
+
+            Assert.That(result.ManeuverRequests.Any(item => item.UnitId == movingUnit.Id &&
+                item.StopReason == MovementStopReason.TileCapacityReached), Is.True);
+            Assert.That(movingUnit.ManeuverRecommandTurn, Is.EqualTo(state.TurnNumber));
+            Assert.That(movingUnit.RemainingMovement, Is.GreaterThan(0));
+        }
+
         private static GameCommand Move(GameState state, UnitState unit, List<EntityId> path)
         {
             return new GameCommand

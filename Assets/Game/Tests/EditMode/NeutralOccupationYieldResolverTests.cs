@@ -56,6 +56,26 @@ namespace LittleCiv.Tests
             Assert.That(fixture.City.StoredFood, Is.EqualTo(5));
         }
 
+        [Test]
+        public void TurnProcessorCollectsAndReportsAllFourOccupiedCityYields()
+        {
+            var fixture = Create(14012, NeutralCitySpecialization.Science);
+            AddSpecializationDistricts(fixture, 1);
+
+            var resolution = new TurnProcessor().Resolve(fixture.State, new GameCommand[0]);
+            var yields = resolution.Events.Where(item =>
+                item.Type == GameEventType.NeutralOccupationYieldCollected &&
+                item.SourceId == fixture.City.Id).ToArray();
+
+            Assert.That(yields.Select(item => (TileResourceType)item.PrimaryValue),
+                Is.EquivalentTo(new[]
+                {
+                    TileResourceType.Food, TileResourceType.Commerce,
+                    TileResourceType.Science, TileResourceType.Culture
+                }));
+            Assert.That(yields.All(item => item.SecondaryValue > 0), Is.True);
+        }
+
         private static Fixture Create(long seed, NeutralCitySpecialization specialization)
         {
             var state = PrototypeMatchFactory.Create(seed);

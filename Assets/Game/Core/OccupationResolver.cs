@@ -97,7 +97,7 @@ namespace LittleCiv.Core
             district.IsOperational = false;
             if (city != null && occupyingPlayerId != city.OwnerId)
             {
-                district.IsPillaged = grantsPillageReward;
+                if (grantsPillageReward) district.IsPillaged = true;
                 district.RemainingRepairTurns = 0;
             }
             var tile = FindTile(state, tileId);

@@ -51,7 +51,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void NewCitizensWaitForUnlockThenBuildScienceCultureAndSpecialization()
+        public void NewCitizensWaitForUnlockThenBuildScienceCultureAndNeededSupport()
         {
             var state = PrototypeMatchFactory.Create(13101);
             var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
@@ -76,13 +76,14 @@ namespace LittleCiv.Tests
             Assert.That(culture.Type, Is.EqualTo(DistrictType.Culture));
 
             city.Population = 8;
-            var specialized = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
+            var lateConstruction = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
                 .Where(item => item.CityId == city.Id).ToArray();
-            Assert.That(specialized.Length, Is.EqualTo(2));
-            Assert.That(specialized.All(item => item.Type ==
+            Assert.That(lateConstruction.Length, Is.EqualTo(2));
+            Assert.That(lateConstruction.All(item => item.Type == DistrictType.Agriculture ||
+                item.Type == DistrictType.Commerce || item.Type ==
                 NeutralCityRules.DistrictTypeFor(city.NeutralSpecialization)), Is.True);
             Assert.That(NeutralCityDevelopmentResolver.NextDistrictType(state, city),
-                Is.EqualTo(DistrictType.Government));
+                Is.Not.EqualTo(DistrictType.Government));
         }
 
         [Test]
@@ -132,7 +133,25 @@ namespace LittleCiv.Tests
                     Type = types[index], ControllerId = city.OwnerId,
                     IsOperational = true, AssignedCitizens = 1
                 });
-            city.Population = 5;
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = buildable[3].TileId,
+                Type = DistrictType.Agriculture, ControllerId = city.OwnerId,
+                IsOperational = true, AssignedCitizens = 1
+            });
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = buildable[4].TileId,
+                Type = DistrictType.Agriculture, ControllerId = city.OwnerId,
+                IsOperational = true, AssignedCitizens = 1
+            });
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = buildable[5].TileId,
+                Type = DistrictType.Commerce, ControllerId = city.OwnerId,
+                IsOperational = true, AssignedCitizens = 1
+            });
+            city.Population = 8;
 
             var started = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
                 .Single(item => item.CityId == city.Id);

@@ -74,10 +74,61 @@ namespace LittleCiv.Core
 
         public static DistrictType NextDistrictType(GameState state, CityState city)
         {
+            var breakdown = CityEconomyResolver.CalculateBreakdown(state, city);
+            var pendingFood = 0;
+            var pendingUpkeep = 0;
+            for (var index = 0; index < state.UnitTrainings.Count; index++)
+            {
+                var district = state.Districts.Find(item => item.Id == state.UnitTrainings[index].DistrictId);
+                if (district == null || district.CityId != city.Id) continue;
+                pendingFood += UnitRules.FoodConsumption(state.UnitTrainings[index].Type);
+                pendingUpkeep += MaintenanceResolver.UnitUpkeep(state.UnitTrainings[index].Type);
+            }
+            var projectedFood = breakdown.Food.Total + PendingSupportYield(state, city, DistrictType.Agriculture);
+            var projectedGold = breakdown.Gold.Total + PendingSupportYield(state, city, DistrictType.Commerce);
+            var requiredFood = city.Population + breakdown.UnitFoodConsumption + pendingFood + 1;
+            if (projectedFood < requiredFood) return DistrictType.Agriculture;
+            var requiredGold = breakdown.UnitUpkeep + breakdown.FacilityUpkeep + pendingUpkeep + 1;
+            if (projectedGold < requiredGold) return DistrictType.Commerce;
             if (!HasDistrict(state, city.Id, DistrictType.Science)) return DistrictType.Science;
             if (!HasDistrict(state, city.Id, DistrictType.Culture)) return DistrictType.Culture;
             var specialization = NeutralCityRules.DistrictTypeFor(city.NeutralSpecialization);
-            return CountDistricts(state, city.Id, specialization) < 3 ? specialization : DistrictType.Government;
+            if (city.NeutralSpecialization == NeutralCitySpecialization.Military)
+            {
+                var military = CountDistricts(state, city.Id, DistrictType.Military);
+                if (CountDistricts(state, city.Id, DistrictType.Agriculture) <= military)
+                    return DistrictType.Agriculture;
+                if (CountDistricts(state, city.Id, DistrictType.Commerce) <= military)
+                    return DistrictType.Commerce;
+            }
+            return specialization;
+        }
+
+        private static int PendingSupportYield(GameState state, CityState city, DistrictType type)
+        {
+            var total = 0;
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId != city.Id || district.Type != type ||
+                    district.RemainingConstructionTurns <= 0 || district.AssignedCitizens <= 0) continue;
+                var tile = state.Tiles.Find(item => item.Id == district.TileId);
+                if (type == DistrictType.Agriculture)
+                {
+                    total += CityEconomyResolver.AgricultureFood;
+                    if (tile != null && tile.ResourceType == TileResourceType.Food)
+                        total += CityEconomyResolver.AgricultureResourceBonus;
+                    if (NeutralResearchResolver.HasResearch(city, ResearchType.Fertilizer)) total++;
+                }
+                else if (type == DistrictType.Commerce)
+                {
+                    total += CityEconomyResolver.CommerceGold;
+                    if (tile != null && tile.ResourceType == TileResourceType.Commerce)
+                        total += CityEconomyResolver.CommerceResourceBonus;
+                    if (NeutralResearchResolver.HasResearch(city, ResearchType.Currency)) total++;
+                }
+            }
+            return total;
         }
 
         private static bool TryStartType(GameState state, CityState city, DistrictType type,

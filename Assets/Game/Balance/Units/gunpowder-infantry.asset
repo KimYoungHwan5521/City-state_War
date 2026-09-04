@@ -18,7 +18,7 @@ MonoBehaviour:
   RequiredResearchId: gunpowder
   IsSupplyUnit: 0
   EquipmentTier: 2
-  Attack: 7
+  Attack: 15
   MaxHitPoints: 27
   HealingPerTurn: 3
   Movement: 2

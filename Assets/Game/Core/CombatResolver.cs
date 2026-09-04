@@ -59,19 +59,22 @@ namespace LittleCiv.Core
             }
 
             var retaliationSources = SnapshotCombatants(defenders);
+            var preparedDefense = !request.BothSidesAreAttackers && defenders[0].HasAutomaticDefense;
+            var defenseBonus = DefenseBonus(state, request, defenders[0]);
+            var defenseEquipmentTier = DefenseEquipmentTier(state, request, defenders[0]);
             ApplyDamagePool(
                 defenders,
-                CalculateDamage(attacker, defenders[0], 2, DefenseBonus(state, request, defenders[0])),
+                CalculateDamage(attacker, defenders[0], preparedDefense,
+                    defenseBonus, defenseEquipmentTier),
                 result);
 
             var attackerDamage = 0;
-            var retaliationMultiplier = request.BothSidesAreAttackers ? 2 : 3;
             for (var i = 0; i < retaliationSources.Count; i++)
             {
                 attackerDamage += CalculateDamage(
                     retaliationSources[i],
                     attacker,
-                    retaliationMultiplier,
+                    false,
                     0);
             }
             ApplyDamage(attacker, attackerDamage, result);
@@ -98,29 +101,29 @@ namespace LittleCiv.Core
         public static int CalculateDamage(
             UnitState source,
             UnitState target,
-            int roleMultiplier,
-            int defenseBonusPercent)
+            bool targetHasDefensivePosture,
+            int defenseBonusPercent,
+            int minimumTargetEquipmentTier = 0)
         {
             if (source == null) throw new ArgumentNullException(nameof(source));
             if (target == null) throw new ArgumentNullException(nameof(target));
-            long numerator = UnitRules.Attack(source.Type) * roleMultiplier;
+            long numerator = UnitRules.Attack(source.Type);
             long denominator = 1;
-            var difference = UnitRules.EquipmentTier(source.Type) - UnitRules.EquipmentTier(target.Type);
+            var targetEquipmentTier = Math.Max(
+                UnitRules.EquipmentTier(target.Type), minimumTargetEquipmentTier);
+            var difference = UnitRules.EquipmentTier(source.Type) - targetEquipmentTier;
             if (difference > 0)
             {
                 numerator *= 5 + (4 * difference);
                 denominator *= 5;
             }
-            else
-            {
-                for (var i = 0; i < -difference; i++)
-                {
-                    numerator *= 2;
-                    denominator *= 3;
-                }
-            }
 
             if (source.IsStarving) denominator *= 2;
+            if (targetHasDefensivePosture)
+            {
+                numerator *= 2;
+                denominator *= 3;
+            }
             if (defenseBonusPercent > 0)
             {
                 numerator *= 100;
@@ -171,6 +174,21 @@ namespace LittleCiv.Core
             if (request.BothSidesAreAttackers || !defender.HasAutomaticDefense) return 0;
             var tile = FindTile(state, request.TargetTileId);
             return tile == null ? 0 : Math.Max(0, tile.DefenseBonusPercent);
+        }
+
+        private static int DefenseEquipmentTier(
+            GameState state,
+            CombatEngagementRequest request,
+            UnitState defender)
+        {
+            if (request.BothSidesAreAttackers || !defender.HasAutomaticDefense) return 0;
+            for (var index = 0; index < state.DefenseFacilities.Count; index++)
+            {
+                var facility = state.DefenseFacilities[index];
+                if (facility.TileId == request.TargetTileId)
+                    return DefenseFacilityResolver.EffectiveEquipmentTier(facility);
+            }
+            return 0;
         }
 
         private static List<UnitState> GetDefenders(GameState state, EntityId tileId, EntityId attackerOwner)

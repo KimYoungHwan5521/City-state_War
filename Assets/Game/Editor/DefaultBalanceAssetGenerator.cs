@@ -52,12 +52,12 @@ namespace LittleCiv.Editor
         {
             return new List<UnitDefinition>
             {
-                Unit("militia", "민병대", UnitType.Militia, null, false, 0, 3, 16, 2, 2, 6, 1, 3, 1, true),
-                Unit("iron-infantry", "철제보병", UnitType.IronInfantry, "iron-working", false, 1, 5, 16, 2, 2, 6, 2, 7, 2, true),
-                Unit("gunpowder-infantry", "화약보병", UnitType.GunpowderInfantry, "gunpowder", false, 2, 7, 27, 3, 2, 6, 3, 12, 3, true),
-                Unit("mechanized-infantry", "기계화보병", UnitType.MechanizedInfantry, "vehicles", false, 3, 9, 38, 4, 3, 10, 4, 20, 5, true),
-                Unit("supply", "보급병", UnitType.Supply, null, true, 0, 1, 9, 1, 4, 20, 1, 2, 1, true),
-                Unit("motorized-supply", "차량화 보급대", UnitType.MotorizedSupply, "vehicles", true, 3, 4, 16, 2, 6, 40, 3, 14, 3, true)
+                Unit("militia", "민병대", UnitType.Militia, null, false, 0, 9, 16, 2, 2, 6, 1, 3, 1, true),
+                Unit("iron-infantry", "철제보병", UnitType.IronInfantry, "iron-working", false, 1, 12, 22, 2, 2, 6, 2, 7, 2, true),
+                Unit("gunpowder-infantry", "화약보병", UnitType.GunpowderInfantry, "gunpowder", false, 2, 15, 27, 3, 2, 6, 3, 12, 3, true),
+                Unit("mechanized-infantry", "기계화보병", UnitType.MechanizedInfantry, "vehicles", false, 3, 18, 32, 4, 3, 10, 4, 20, 5, true),
+                Unit("supply", "보급병", UnitType.Supply, null, true, 0, 3, 12, 1, 4, 20, 1, 2, 1, true),
+                Unit("motorized-supply", "차량화 보급대", UnitType.MotorizedSupply, "vehicles", true, 3, 12, 21, 2, 6, 40, 3, 14, 3, true)
             };
         }
 

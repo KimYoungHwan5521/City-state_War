@@ -18,7 +18,7 @@ MonoBehaviour:
   RequiredResearchId: 
   IsSupplyUnit: 0
   EquipmentTier: 0
-  Attack: 3
+  Attack: 9
   MaxHitPoints: 16
   HealingPerTurn: 2
   Movement: 2

@@ -46,6 +46,7 @@ namespace LittleCiv.Tests
             city.NeutralCompletedResearch.Add(ResearchType.IronWorking);
             city.NeutralCompletedResearch.Add(ResearchType.Gunpowder);
             city.Gold = 100;
+            city.StoredFood = 20;
             var first = AddOperationalMilitaryDistrict(state, city);
             var second = AddOperationalMilitaryDistrict(state, city);
 
@@ -106,16 +107,26 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void HostileIntruderCausesNeutralDefensiveMovement()
+        public void HostileIntruderKeepsEmergencyGuardAndMovesAnotherDefender()
         {
             var state = PrototypeMatchFactory.Create(13304);
             var city = NeutralCity(state, NeutralCitySpecialization.Science);
             var defender = state.Units.Single(item => item.HomeCityId == city.Id);
             defender.RemainingMovement = UnitRules.Movement(defender.Type);
             defender.CreatedTurn = state.TurnNumber - 1;
+            var reinforcementTile = state.MapTopology.FindView(city.Id).Tiles
+                .First(item => item.IsBuildable).TileId;
+            var reinforcement = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = reinforcementTile, Type = UnitType.Militia, HitPoints = 16,
+                RemainingMovement = 2, CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(reinforcement);
             var intruderOwner = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
             NeutralCityRules.SetFavor(city, intruderOwner.Id, -10);
-            var targetTile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable).TileId;
+            var targetTile = state.MapTopology.FindView(city.Id).Tiles
+                .First(item => item.IsBuildable && item.TileId != reinforcementTile).TileId;
             state.Units.Add(new UnitState
             {
                 Id = state.AllocateId(), OwnerId = intruderOwner.Id,
@@ -123,11 +134,56 @@ namespace LittleCiv.Tests
                 TileId = targetTile, Type = UnitType.Militia, HitPoints = 16
             });
 
-            var movement = NeutralMilitaryResolver.IssueOrders(state).Movements
-                .Single(item => item.SubjectId == defender.Id);
+            var result = NeutralMilitaryResolver.IssueOrders(state);
+            var movement = result.Movements.Single(item => item.SubjectId == reinforcement.Id);
 
+            Assert.That(result.Movements.Any(item => item.SubjectId == defender.Id), Is.False);
             Assert.That(movement.TargetId, Is.EqualTo(targetTile));
             Assert.That(movement.SecondaryValue, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void OccupiedDistrictIsRecapturedWithoutAbandoningGovernmentGuard()
+        {
+            var state = PrototypeMatchFactory.Create(13305);
+            var city = NeutralCity(state, NeutralCitySpecialization.Science);
+            var guard = state.Units.Single(item => item.HomeCityId == city.Id);
+            guard.RemainingMovement = UnitRules.Movement(guard.Type);
+            guard.CreatedTurn = state.TurnNumber - 1;
+            var occupied = AddOperationalDistrict(state, city, DistrictType.Science);
+            var attacker = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            occupied.ControllerId = attacker.Id;
+            occupied.IsOperational = false;
+            state.Tiles.Single(item => item.Id == occupied.TileId).ControllerId = attacker.Id;
+            var reinforcementTile = state.MapTopology.FindView(city.Id).Tiles.First(item =>
+                item.IsBuildable && item.TileId != occupied.TileId &&
+                state.Districts.All(district => district.TileId != item.TileId));
+            var reinforcement = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = reinforcementTile.TileId, Type = UnitType.Militia, HitPoints = 16,
+                RemainingMovement = 2, CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(reinforcement);
+
+            var result = NeutralMilitaryResolver.IssueOrders(state);
+
+            Assert.That(result.Movements.Any(item => item.SubjectId == guard.Id), Is.False);
+            Assert.That(result.Movements.Single(item => item.SubjectId == reinforcement.Id).TargetId,
+                Is.EqualTo(occupied.TileId));
+        }
+
+        [Test]
+        public void TrainingIsDeferredWhenFoodAndGoldCannotCoverTheNewUnit()
+        {
+            var state = PrototypeMatchFactory.Create(13306);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            city.Gold = 0;
+            city.StoredFood = 0;
+            city.Population = 12;
+
+            Assert.That(NeutralMilitaryResolver.CanSustainTraining(state, city, UnitType.Militia),
+                Is.False);
         }
 
         private static CityState NeutralCity(GameState state, NeutralCitySpecialization specialization) =>
@@ -135,12 +191,17 @@ namespace LittleCiv.Tests
 
         private static DistrictState AddOperationalMilitaryDistrict(GameState state, CityState city)
         {
+            return AddOperationalDistrict(state, city, DistrictType.Military);
+        }
+
+        private static DistrictState AddOperationalDistrict(GameState state, CityState city, DistrictType type)
+        {
             var tile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable &&
                 state.Districts.All(district => district.TileId != item.TileId));
             var district = new DistrictState
             {
                 Id = state.AllocateId(), CityId = city.Id, TileId = tile.TileId,
-                Type = DistrictType.Military, ControllerId = city.OwnerId,
+                Type = type, ControllerId = city.OwnerId,
                 IsOperational = true, AssignedCitizens = 1
             };
             state.Districts.Add(district);

@@ -18,8 +18,8 @@ MonoBehaviour:
   RequiredResearchId: 
   IsSupplyUnit: 1
   EquipmentTier: 0
-  Attack: 1
-  MaxHitPoints: 9
+  Attack: 3
+  MaxHitPoints: 12
   HealingPerTurn: 1
   Movement: 4
   BaseFoodCapacity: 20

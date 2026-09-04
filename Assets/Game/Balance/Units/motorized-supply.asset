@@ -18,8 +18,8 @@ MonoBehaviour:
   RequiredResearchId: vehicles
   IsSupplyUnit: 1
   EquipmentTier: 3
-  Attack: 4
-  MaxHitPoints: 16
+  Attack: 12
+  MaxHitPoints: 21
   HealingPerTurn: 2
   Movement: 6
   BaseFoodCapacity: 40

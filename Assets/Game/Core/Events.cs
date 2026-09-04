@@ -68,7 +68,8 @@ namespace LittleCiv.Core
         NeutralLevyConditionalMoveCancelled = 61,
         NeutralLevyTerminated = 62,
         ColdWarStarted = 63,
-        GroundFoodPickedUp = 64
+        GroundFoodPickedUp = 64,
+        PlayerCitiesExchanged = 65
     }
 
     [Serializable]

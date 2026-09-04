@@ -130,8 +130,23 @@ namespace LittleCiv.Tests
                 item.Type == DistrictType.Government);
             var secondGovernment = state.Districts.Single(item => item.CityId == secondCity.Id &&
                 item.Type == DistrictType.Government);
+            firstCity.Gold = 17;
+            firstCity.StoredFood = 23;
+            secondCity.Gold = 31;
+            secondCity.StoredFood = 37;
+            var firstUnit = state.Units.First(item => item.OwnerId == players[0].Id);
+            var secondUnit = state.Units.First(item => item.OwnerId == players[1].Id);
+            firstUnit.TileId = secondGovernment.TileId;
+            secondUnit.TileId = firstGovernment.TileId;
             firstGovernment.ControllerId = players[1].Id;
             secondGovernment.ControllerId = players[0].Id;
+            state.Tiles.Single(item => item.Id == firstGovernment.TileId).ControllerId = players[1].Id;
+            state.Tiles.Single(item => item.Id == secondGovernment.TileId).ControllerId = players[0].Id;
+            state.UnitTrainings.Add(new UnitTrainingState
+            {
+                Id = state.AllocateId(), DistrictId = firstGovernment.Id,
+                OwnerId = players[0].Id, Type = UnitType.Militia, RemainingTurns = 1
+            });
 
             var winner = VictoryResolver.ResolveConquest(state);
 
@@ -139,6 +154,52 @@ namespace LittleCiv.Tests
             Assert.That(state.IsGameOver, Is.False);
             Assert.That(firstGovernment.ControllerId, Is.EqualTo(players[1].Id));
             Assert.That(secondGovernment.ControllerId, Is.EqualTo(players[0].Id));
+            Assert.That(firstCity.OwnerId, Is.EqualTo(players[1].Id));
+            Assert.That(secondCity.OwnerId, Is.EqualTo(players[0].Id));
+            Assert.That(state.Tiles.Where(item => item.CityId == firstCity.Id)
+                .All(item => item.ControllerId == players[1].Id), Is.True);
+            Assert.That(state.Tiles.Where(item => item.CityId == secondCity.Id)
+                .All(item => item.ControllerId == players[0].Id), Is.True);
+            Assert.That(firstCity.Gold, Is.EqualTo(17));
+            Assert.That(firstCity.StoredFood, Is.EqualTo(23));
+            Assert.That(secondCity.Gold, Is.EqualTo(31));
+            Assert.That(secondCity.StoredFood, Is.EqualTo(37));
+            Assert.That(firstUnit.OwnerId, Is.EqualTo(players[0].Id));
+            Assert.That(firstUnit.HomeCityId, Is.EqualTo(secondCity.Id));
+            Assert.That(secondUnit.OwnerId, Is.EqualTo(players[1].Id));
+            Assert.That(secondUnit.HomeCityId, Is.EqualTo(firstCity.Id));
+            Assert.That(state.UnitTrainings.Single().OwnerId, Is.EqualTo(players[1].Id));
+            Assert.That(CityEconomyResolver.CalculateBreakdown(state, firstCity).Food.Total,
+                Is.GreaterThan(0));
+            Assert.That(CityEconomyResolver.CalculateBreakdown(state, secondCity).Food.Total,
+                Is.GreaterThan(0));
+        }
+
+        [Test]
+        public void ReciprocalCapitalCaptureEmitsCityExchangeEvent()
+        {
+            var state = PrototypeMatchFactory.Create(9907);
+            var players = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToList();
+            var firstCity = state.Cities.Single(item => item.OwnerId == players[0].Id);
+            var secondCity = state.Cities.Single(item => item.OwnerId == players[1].Id);
+            var firstGovernment = state.Districts.Single(item => item.CityId == firstCity.Id &&
+                item.Type == DistrictType.Government);
+            var secondGovernment = state.Districts.Single(item => item.CityId == secondCity.Id &&
+                item.Type == DistrictType.Government);
+            var firstUnit = state.Units.First(item => item.OwnerId == players[0].Id);
+            var secondUnit = state.Units.First(item => item.OwnerId == players[1].Id);
+            firstUnit.TileId = secondGovernment.TileId;
+            secondUnit.TileId = firstGovernment.TileId;
+            firstGovernment.ControllerId = players[1].Id;
+            secondGovernment.ControllerId = players[0].Id;
+
+            var result = new TurnProcessor().Resolve(state, new GameCommand[0]);
+            var exchange = result.Events.Single(item =>
+                item.Type == GameEventType.PlayerCitiesExchanged);
+
+            Assert.That(exchange.SourceId, Is.EqualTo(firstCity.Id));
+            Assert.That(exchange.TargetId, Is.EqualTo(secondCity.Id));
+            Assert.That(state.IsGameOver, Is.False);
         }
 
         private static Fixture CreateConquestTurn()

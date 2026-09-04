@@ -479,10 +479,23 @@ namespace LittleCiv.Core
                 }
                 if (phase == TurnPhase.ConquestVictory && !state.IsGameOver)
                 {
+                    var playerCities = state.Cities.FindAll(city =>
+                    {
+                        var owner = state.Players.Find(player => player.Id == city.OwnerId);
+                        return owner != null && owner.Slot != PlayerSlot.Neutral;
+                    });
+                    playerCities.Sort((left, right) => left.Id.CompareTo(right.Id));
+                    var firstOwnerBefore = playerCities.Count == 2 ? playerCities[0].OwnerId : default;
+                    var secondOwnerBefore = playerCities.Count == 2 ? playerCities[1].OwnerId : default;
                     var conquestWinner = VictoryResolver.ResolveConquest(state);
                     if (conquestWinner.IsValid)
                         resolution.Events.Add(CreateEvent(turnNumber, GameEventType.VictoryTriggered,
                             conquestWinner, primaryValue: (int)VictoryType.Conquest));
+                    else if (playerCities.Count == 2 &&
+                             playerCities[0].OwnerId == secondOwnerBefore &&
+                             playerCities[1].OwnerId == firstOwnerBefore)
+                        resolution.Events.Add(CreateEvent(turnNumber, GameEventType.PlayerCitiesExchanged,
+                            playerCities[0].Id, playerCities[1].Id));
                 }
                 if (state.IsGameOver && phase != TurnPhase.MovementCombatOccupation) break;
             }
@@ -944,7 +957,8 @@ namespace LittleCiv.Core
             if (unit == null || unit.RemainingMovement <= 0 ||
                 (reason != MovementStopReason.EnemyOccupied &&
                  reason != MovementStopReason.PriorityLost &&
-                 reason != MovementStopReason.SwapConflict))
+                 reason != MovementStopReason.SwapConflict &&
+                 reason != MovementStopReason.TileCapacityReached))
             {
                 return;
             }

@@ -127,6 +127,19 @@ namespace LittleCiv.Core
             }
         }
 
+        public static int EffectiveEquipmentTier(DefenseFacilityState facility)
+        {
+            if (facility == null) return 0;
+            if (facility.Type == DefenseFacilityType.ModernDefense && !facility.IsModernDefenseActive) return 2;
+            switch (facility.Type)
+            {
+                case DefenseFacilityType.Wall: return 1;
+                case DefenseFacilityType.Moat: return 2;
+                case DefenseFacilityType.ModernDefense: return 3;
+                default: return 0;
+            }
+        }
+
         public static int ConstructionTurns(DefenseFacilityType type) => type == DefenseFacilityType.Wall ? 2 : type == DefenseFacilityType.Moat ? 4 : type == DefenseFacilityType.ModernDefense ? 8 : 0;
         public static int GoldCost(DefenseFacilityType type) => type == DefenseFacilityType.Wall ? 5 : type == DefenseFacilityType.Moat ? 10 : type == DefenseFacilityType.ModernDefense ? 20 : 0;
 

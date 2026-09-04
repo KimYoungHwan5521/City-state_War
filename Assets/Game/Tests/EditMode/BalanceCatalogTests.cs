@@ -70,12 +70,12 @@ namespace LittleCiv.Tests
         {
             var catalog = LoadCatalog();
 
-            AssertUnit(catalog, UnitType.Militia, 0, 3, 16, 2, 2, 6);
-            AssertUnit(catalog, UnitType.IronInfantry, 1, 5, 16, 2, 2, 6);
-            AssertUnit(catalog, UnitType.GunpowderInfantry, 2, 7, 27, 3, 2, 6);
-            AssertUnit(catalog, UnitType.MechanizedInfantry, 3, 9, 38, 4, 3, 10);
-            AssertUnit(catalog, UnitType.Supply, 0, 1, 9, 1, 4, 20);
-            AssertUnit(catalog, UnitType.MotorizedSupply, 3, 4, 16, 2, 6, 40);
+            AssertUnit(catalog, UnitType.Militia, 0, 9, 16, 2, 2, 6);
+            AssertUnit(catalog, UnitType.IronInfantry, 1, 12, 22, 2, 2, 6);
+            AssertUnit(catalog, UnitType.GunpowderInfantry, 2, 15, 27, 3, 2, 6);
+            AssertUnit(catalog, UnitType.MechanizedInfantry, 3, 18, 32, 4, 3, 10);
+            AssertUnit(catalog, UnitType.Supply, 0, 3, 12, 1, 4, 20);
+            AssertUnit(catalog, UnitType.MotorizedSupply, 3, 12, 21, 2, 6, 40);
         }
 
         [Test]

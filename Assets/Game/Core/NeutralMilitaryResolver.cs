@@ -37,21 +37,52 @@ namespace LittleCiv.Core
                 item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
                 state.Tiles.Exists(tile => tile.Id == item.TileId && tile.CityId == city.Id));
             hostileTargets.Sort((left, right) => left.Id.CompareTo(right.Id));
-            var hostileApproach = state.Units.Exists(item => item.OwnerId != city.OwnerId &&
+            var approachingHostiles = state.Units.FindAll(item => item.OwnerId != city.OwnerId &&
                 item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
                 IsInOrAdjacentToCity(state, city, item.TileId));
+            approachingHostiles.Sort((left, right) => left.Id.CompareTo(right.Id));
+            var occupiedDistricts = state.Districts.FindAll(item => item.CityId == city.Id &&
+                item.ControllerId != city.OwnerId);
+            occupiedDistricts.Sort((left, right) =>
+            {
+                var governmentOrder = (left.Type == DistrictType.Government ? 0 : 1)
+                    .CompareTo(right.Type == DistrictType.Government ? 0 : 1);
+                return governmentOrder != 0 ? governmentOrder : left.Id.CompareTo(right.Id);
+            });
             var units = state.Units.FindAll(item => item.OwnerId == city.OwnerId &&
                 item.HomeCityId == city.Id && item.HitPoints > 0 && item.RemainingMovement > 0 &&
                 item.CreatedTurn != state.TurnNumber);
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
+            var emergencyGuard = SelectEmergencyGuard(units, government.TileId);
+            var needsEmergencyGuard = !governmentThreatened && emergencyGuard == null;
             for (var index = 0; index < units.Count; index++)
             {
                 var unit = units[index];
+                if (!governmentThreatened && emergencyGuard != null && unit.Id == emergencyGuard.Id)
+                    continue;
                 var outsideHome = !state.Tiles.Exists(tile => tile.Id == unit.TileId && tile.CityId == city.Id);
                 EntityId target = default;
-                if (governmentThreatened || outsideHome || (hostileApproach && hostileTargets.Count == 0))
+                if (governmentThreatened || outsideHome || needsEmergencyGuard)
+                {
                     target = government.TileId;
-                else if (hostileTargets.Count > 0) target = hostileTargets[0].TileId;
+                    needsEmergencyGuard = false;
+                }
+                else if (occupiedDistricts.Count > 0)
+                {
+                    target = ClosestDistrictTarget(state, unit, occupiedDistricts);
+                }
+                else if (hostileTargets.Count > 0)
+                {
+                    var hostile = ClosestHostile(state, unit, hostileTargets);
+                    var attackPath = hostile == null ? new List<EntityId>() : FindPath(state, unit, hostile.TileId);
+                    target = attackPath.Count > 0 && attackPath.Count <= unit.RemainingMovement
+                        ? hostile.TileId
+                        : ClosestDefensiveDistrict(state, city, hostile == null ? unit.TileId : hostile.TileId);
+                }
+                else if (approachingHostiles.Count > 0)
+                {
+                    target = ClosestDefensiveDistrict(state, city, approachingHostiles[0].TileId);
+                }
                 if (!target.IsValid || target == unit.TileId) continue;
                 var path = FindPath(state, unit, target);
                 if (path.Count == 0) continue;
@@ -62,6 +93,75 @@ namespace LittleCiv.Core
                     SubjectId = unit.Id, TargetId = target, SecondaryValue = 1, Path = path
                 });
             }
+        }
+
+        private static UnitState SelectEmergencyGuard(List<UnitState> units, EntityId governmentTileId)
+        {
+            UnitState result = null;
+            for (var index = 0; index < units.Count; index++)
+            {
+                var candidate = units[index];
+                if (candidate.TileId != governmentTileId || UnitRules.IsSupply(candidate.Type)) continue;
+                if (result == null || UnitRules.Attack(candidate.Type) > UnitRules.Attack(result.Type) ||
+                    (UnitRules.Attack(candidate.Type) == UnitRules.Attack(result.Type) &&
+                     candidate.HitPoints > result.HitPoints)) result = candidate;
+            }
+            return result;
+        }
+
+        private static EntityId ClosestDistrictTarget(GameState state, UnitState unit,
+            List<DistrictState> districts)
+        {
+            DistrictState selected = null;
+            var best = int.MaxValue;
+            for (var index = 0; index < districts.Count; index++)
+            {
+                var path = FindPath(state, unit, districts[index].TileId);
+                if (path.Count == 0 || path.Count >= best) continue;
+                best = path.Count;
+                selected = districts[index];
+            }
+            return selected == null ? default : selected.TileId;
+        }
+
+        private static UnitState ClosestHostile(GameState state, UnitState unit, List<UnitState> hostiles)
+        {
+            UnitState selected = null;
+            var best = int.MaxValue;
+            for (var index = 0; index < hostiles.Count; index++)
+            {
+                var path = FindPath(state, unit, hostiles[index].TileId);
+                if (path.Count == 0 || path.Count >= best) continue;
+                best = path.Count;
+                selected = hostiles[index];
+            }
+            return selected;
+        }
+
+        private static EntityId ClosestDefensiveDistrict(GameState state, CityState city,
+            EntityId hostileTileId)
+        {
+            var hostile = state.Tiles.Find(item => item.Id == hostileTileId);
+            DistrictState selected = null;
+            var best = int.MaxValue;
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId != city.Id || district.ControllerId != city.OwnerId ||
+                    district.Type == DistrictType.Government || district.RemainingConstructionTurns > 0 ||
+                    district.IsPillaged) continue;
+                var tile = state.Tiles.Find(item => item.Id == district.TileId);
+                if (tile == null || hostile == null) continue;
+                var distance = HexCoord.Distance(new HexCoord(tile.Q, tile.R),
+                    new HexCoord(hostile.Q, hostile.R));
+                if (distance >= best) continue;
+                best = distance;
+                selected = district;
+            }
+            return selected == null
+                ? state.Districts.Find(item => item.CityId == city.Id &&
+                    item.Type == DistrictType.Government)?.TileId ?? default
+                : selected.TileId;
         }
 
         private static bool IsHostileToCity(GameState state, CityState city, EntityId playerId)
@@ -165,6 +265,12 @@ namespace LittleCiv.Core
                     supplyNeeded--;
                 }
                 if (!type.HasValue) break;
+                if (!CanSustainTraining(state, city, type.Value))
+                {
+                    if (UnitRules.IsSupply(type.Value)) supplyNeeded++;
+                    else combatNeeded++;
+                    break;
+                }
                 var command = new GameCommand
                 {
                     CommandId = state.AllocateId(), PlayerId = city.OwnerId, TurnNumber = state.TurnNumber,
@@ -176,6 +282,31 @@ namespace LittleCiv.Core
                 else if (UnitRules.IsSupply(type.Value)) supplyNeeded++;
                 else combatNeeded++;
             }
+        }
+
+        public static bool CanSustainTraining(GameState state, CityState city, UnitType type)
+        {
+            if (state == null || city == null) return false;
+            var breakdown = CityEconomyResolver.CalculateBreakdown(state, city);
+            var pendingFood = 0;
+            var pendingUpkeep = 0;
+            for (var index = 0; index < state.UnitTrainings.Count; index++)
+            {
+                var district = state.Districts.Find(item => item.Id == state.UnitTrainings[index].DistrictId);
+                if (district == null || district.CityId != city.Id) continue;
+                pendingFood += UnitRules.FoodConsumption(state.UnitTrainings[index].Type);
+                pendingUpkeep += MaintenanceResolver.UnitUpkeep(state.UnitTrainings[index].Type);
+            }
+            var projectedFood = breakdown.Food.Total - city.Population -
+                                breakdown.UnitFoodConsumption - pendingFood -
+                                UnitRules.FoodConsumption(type);
+            var projectedGold = breakdown.Gold.Total - breakdown.UnitUpkeep -
+                                breakdown.FacilityUpkeep - pendingUpkeep -
+                                MaintenanceResolver.UnitUpkeep(type);
+            var foodSafe = projectedFood >= 0 || city.StoredFood >= -projectedFood * 4;
+            var goldReserveAfterTraining = city.Gold - UnitRules.TrainingGold(type);
+            var goldSafe = projectedGold >= 0 || goldReserveAfterTraining >= -projectedGold * 8;
+            return foodSafe && goldSafe;
         }
 
         private static UnitType? NextPromotion(CityState city, UnitType type)

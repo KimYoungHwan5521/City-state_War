@@ -18,8 +18,8 @@ MonoBehaviour:
   RequiredResearchId: iron-working
   IsSupplyUnit: 0
   EquipmentTier: 1
-  Attack: 5
-  MaxHitPoints: 16
+  Attack: 12
+  MaxHitPoints: 22
   HealingPerTurn: 2
   Movement: 2
   BaseFoodCapacity: 6

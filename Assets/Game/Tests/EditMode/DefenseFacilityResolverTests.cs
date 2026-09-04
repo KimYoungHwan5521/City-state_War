@@ -90,17 +90,30 @@ namespace LittleCiv.Tests
 
             var result = CombatResolver.Resolve(fixture.State, request);
 
-            Assert.That(result.DamageRecords[0].Damage, Is.EqualTo(9));
-            Assert.That(defender.HitPoints, Is.EqualTo(7));
+            Assert.That(result.DamageRecords[0].Damage, Is.EqualTo(4));
+            Assert.That(defender.HitPoints, Is.EqualTo(12));
+        }
+
+        [Test]
+        public void FacilitiesProvideRecordedEquipmentTierAndInactiveModernFallsBackToMoat()
+        {
+            Assert.That(DefenseFacilityResolver.EffectiveEquipmentTier(new DefenseFacilityState
+                { Type = DefenseFacilityType.Wall }), Is.EqualTo(1));
+            Assert.That(DefenseFacilityResolver.EffectiveEquipmentTier(new DefenseFacilityState
+                { Type = DefenseFacilityType.Moat }), Is.EqualTo(2));
+            Assert.That(DefenseFacilityResolver.EffectiveEquipmentTier(new DefenseFacilityState
+                { Type = DefenseFacilityType.ModernDefense, IsModernDefenseActive = true }), Is.EqualTo(3));
+            Assert.That(DefenseFacilityResolver.EffectiveEquipmentTier(new DefenseFacilityState
+                { Type = DefenseFacilityType.ModernDefense, IsModernDefenseActive = false }), Is.EqualTo(2));
         }
 
         [Test]
         public void FacilityCannotBeBuiltOutsideGovernmentDistrict()
         {
             var fixture = CreateFixture(100);
-            var other = fixture.State.Districts.First(item =>
-                item.CityId == fixture.City.Id && item.Type != DistrictType.Government);
-            fixture.Tile = fixture.State.Tiles.First(item => item.Id == other.TileId);
+            var governmentTileId = fixture.Tile.Id;
+            fixture.Tile = fixture.State.Tiles.First(item =>
+                item.CityId == fixture.City.Id && item.Id != governmentTileId);
 
             Assert.That(Start(fixture, DefenseFacilityType.Wall, out _), Is.False);
             Assert.That(fixture.City.Gold, Is.EqualTo(100));

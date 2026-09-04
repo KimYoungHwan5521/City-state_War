@@ -30,12 +30,12 @@ namespace LittleCiv.Core
         {
             switch (type)
             {
-                case UnitType.Militia: return 3;
-                case UnitType.IronInfantry: return 5;
-                case UnitType.GunpowderInfantry: return 7;
-                case UnitType.MechanizedInfantry: return 9;
-                case UnitType.Supply: return 1;
-                case UnitType.MotorizedSupply: return 4;
+                case UnitType.Militia: return 9;
+                case UnitType.IronInfantry: return 12;
+                case UnitType.GunpowderInfantry: return 15;
+                case UnitType.MechanizedInfantry: return 18;
+                case UnitType.Supply: return 3;
+                case UnitType.MotorizedSupply: return 12;
                 default: throw new ArgumentOutOfRangeException(nameof(type));
             }
         }
@@ -45,11 +45,11 @@ namespace LittleCiv.Core
             switch (type)
             {
                 case UnitType.Militia: return 16;
-                case UnitType.IronInfantry: return 16;
+                case UnitType.IronInfantry: return 22;
                 case UnitType.GunpowderInfantry: return 27;
-                case UnitType.MechanizedInfantry: return 38;
-                case UnitType.Supply: return 9;
-                case UnitType.MotorizedSupply: return 16;
+                case UnitType.MechanizedInfantry: return 32;
+                case UnitType.Supply: return 12;
+                case UnitType.MotorizedSupply: return 21;
                 default: throw new ArgumentOutOfRangeException(nameof(type));
             }
         }

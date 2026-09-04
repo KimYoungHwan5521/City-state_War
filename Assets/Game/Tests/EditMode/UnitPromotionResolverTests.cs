@@ -12,7 +12,7 @@ namespace LittleCiv.Tests
             var fixture = CreateFixture(10000);
             fixture.Player.UnlockedUnitTypes.Add(UnitType.GunpowderInfantry);
             fixture.Unit.Type = UnitType.IronInfantry;
-            fixture.Unit.HitPoints = 8;
+            fixture.Unit.HitPoints = 11;
             fixture.Unit.CarriedFood = 5;
             fixture.Unit.IsStarving = true;
             fixture.City.Gold = 10;
@@ -29,6 +29,20 @@ namespace LittleCiv.Tests
             Assert.That(fixture.Unit.RemainingMovement, Is.Zero);
             Assert.That(fixture.City.Gold, Is.EqualTo(5));
             Assert.That(result.GoldCost, Is.EqualTo(5));
+        }
+
+        [Test]
+        public void PromotionPreservesWoundedHealthPercentageWithoutHealingToFull()
+        {
+            var fixture = CreateFixture(10006);
+            fixture.Player.UnlockedUnitTypes.Add(UnitType.MechanizedInfantry);
+            fixture.Unit.HitPoints = 4;
+            fixture.City.Gold = 100;
+            UnitPromotionResult result;
+
+            Assert.That(UnitPromotionResolver.TryPromote(
+                fixture.State, Command(fixture, UnitType.MechanizedInfantry), out result), Is.True);
+            Assert.That(fixture.Unit.HitPoints, Is.EqualTo(8));
         }
 
         [Test]

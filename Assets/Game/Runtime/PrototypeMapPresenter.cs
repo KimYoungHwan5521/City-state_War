@@ -92,6 +92,7 @@ namespace LittleCiv.Runtime
         private bool showNeutralTradePanel;
         private Vector2 researchScroll;
         private Vector2 neutralTradeScroll;
+        private Vector2 combatLogScroll;
         private int levyExtraBid;
 
         private void Start()
@@ -127,6 +128,7 @@ namespace LittleCiv.Runtime
             levyExtraBid = 0;
             researchScroll = Vector2.zero;
             neutralTradeScroll = Vector2.zero;
+            combatLogScroll = Vector2.zero;
             showResearchPanel = false;
             showCheatPanel = false;
             showNeutralTradePanel = false;
@@ -510,6 +512,19 @@ namespace LittleCiv.Runtime
                                  $"군사도시 {gameEvent.TargetId}, 제시금 {gameEvent.PrimaryValue}");
                 if (gameEvent.Type == GameEventType.NeutralLevyAuctionTied)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 징병 입찰 동률: 군사도시 {gameEvent.TargetId} | 양측 실패");
+                if (gameEvent.Type == GameEventType.NeutralOccupationYieldCollected)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 점령 산출: 중립도시 {gameEvent.SourceId} → " +
+                                 $"도시 {gameEvent.TargetId} | {ResourceName((TileResourceType)gameEvent.PrimaryValue)} " +
+                                 $"{gameEvent.SecondaryValue}");
+                if (gameEvent.Type == GameEventType.PlayerCitiesExchanged)
+                {
+                    var firstCity = state.Cities.Find(item => item.Id == gameEvent.SourceId);
+                    var secondCity = state.Cities.Find(item => item.Id == gameEvent.TargetId);
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 동시 정복: " +
+                                 $"{(firstCity == null ? gameEvent.SourceId.ToString() : firstCity.Name)} ↔ " +
+                                 $"{(secondCity == null ? gameEvent.TargetId.ToString() : secondCity.Name)} " +
+                                 "도시 기지 소유권 교환, 기존 병력 제어권 유지");
+                }
             }
             turnLog.Insert(0, $"{resolution.ResolvedTurnNumber}턴: 명령 {resolution.Commands.Count}개, " +
                               $"충돌 {resolution.ManeuverRequests.Count}건.");
@@ -550,6 +565,23 @@ namespace LittleCiv.Runtime
                 PrepareAutomaticTrades(activePlayerId);
             }
             FocusOwnedCity(activePlayerId);
+            if (IsManeuverRecommandPhase())
+            {
+                var maneuver = state.Units.Where(item => item.OwnerId == activePlayerId &&
+                        item.ManeuverRecommandTurn == state.TurnNumber && item.RemainingMovement > 0)
+                    .OrderBy(item => item.Id.Value).FirstOrDefault();
+                if (maneuver != null)
+                {
+                    selectedUnitId = maneuver.Id;
+                    selectedUnitGroup.Clear();
+                    selectedUnitGroup.Add(maneuver.Id);
+                    selectedTileId = maneuver.TileId;
+                    statusMessage = PlanningTurnStatus(FindPlayer(activePlayerId)) +
+                                    " 우클릭으로 우회·전투·대기 경로를 다시 지정하세요.";
+                    ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, maneuver.TileId,
+                        state.Cities[focusedCityIndex].Id));
+                }
+            }
         }
 
         private void ConfigurePlanningPlayers()
@@ -682,7 +714,7 @@ namespace LittleCiv.Runtime
         private void AddCombatLog(string message)
         {
             combatLog.Insert(0, message);
-            if (combatLog.Count > 8) combatLog.RemoveAt(combatLog.Count - 1);
+            if (combatLog.Count > 200) combatLog.RemoveAt(combatLog.Count - 1);
         }
 
         private void FocusOwnedCity(GameEntityId playerId)
@@ -2036,12 +2068,17 @@ namespace LittleCiv.Runtime
         {
             if (combatLog.Count == 0) return;
             var logicalHeight = Screen.height / UiScale;
-            var height = 34f + (Mathf.Min(6, combatLog.Count) * 22f);
+            const float height = 166f;
             var y = Mathf.Max(526f, logicalHeight - height - 16f);
             GUI.Box(new Rect(16f, y, 700f, height), string.Empty);
             GUI.Label(new Rect(28f, y + 8f, 660f, 22f), "전투/이동 기록");
-            for (var index = 0; index < combatLog.Count && index < 6; index++)
-                GUI.Label(new Rect(28f, y + 30f + (index * 22f), 660f, 22f), combatLog[index]);
+            var viewport = new Rect(24f, y + 30f, 684f, 128f);
+            var contentHeight = Mathf.Max(viewport.height, combatLog.Count * 22f);
+            combatLogScroll = GUI.BeginScrollView(viewport, combatLogScroll,
+                new Rect(0f, 0f, 654f, contentHeight));
+            for (var index = 0; index < combatLog.Count; index++)
+                GUI.Label(new Rect(4f, index * 22f, 640f, 22f), combatLog[index]);
+            GUI.EndScrollView();
         }
 
         private void DrawRouteTurnMarkers()

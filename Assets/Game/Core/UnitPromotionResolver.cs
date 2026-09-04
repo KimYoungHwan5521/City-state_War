@@ -39,7 +39,9 @@ namespace LittleCiv.Core
             var previousFood = unit.CarriedFood;
             var previousMaximum = UnitRules.MaximumHitPoints(previousType);
             var promotedMaximum = UnitRules.MaximumHitPoints(promotedType);
-            unit.HitPoints = Math.Max(1, (unit.HitPoints * promotedMaximum) / previousMaximum);
+            // Preserve the pre-promotion health percentage instead of healing the unit.
+            unit.HitPoints = Math.Min(promotedMaximum, Math.Max(1,
+                (int)(((long)unit.HitPoints * promotedMaximum) / previousMaximum)));
             unit.Type = promotedType;
             // Promotion changes equipment, not the food already loaded on the unit.
             unit.CarriedFood = Math.Min(previousFood, UnitRules.FoodCapacity(state, unit));
