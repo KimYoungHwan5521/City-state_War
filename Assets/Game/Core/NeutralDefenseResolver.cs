@@ -5,6 +5,29 @@ namespace LittleCiv.Core
 {
     public static class NeutralDefenseResolver
     {
+        public static List<EntityId> StartAvailableReactivations(GameState state)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            var result = new List<EntityId>();
+            var cities = NeutralCities(state);
+            for (var index = 0; index < cities.Count; index++)
+            {
+                var city = cities[index];
+                var facility = state.DefenseFacilities.Find(item => item.CityId == city.Id &&
+                    item.Type == DefenseFacilityType.ModernDefense &&
+                    !item.IsModernDefenseActive && item.RemainingReactivationTurns <= 0);
+                if (facility == null || !NeutralEconomyPlanner.Evaluate(state, city).IsSafe) continue;
+                var command = new GameCommand
+                {
+                    CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                    TurnNumber = state.TurnNumber, Type = GameCommandType.SetModernDefenseActive,
+                    SubjectId = facility.Id, PrimaryValue = 1
+                };
+                if (DefenseFacilityResolver.TrySetModernActive(state, command)) result.Add(facility.Id);
+            }
+            return result;
+        }
+
         public static List<DefenseFacilityState> StartAvailableConstruction(GameState state)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
@@ -38,11 +61,11 @@ namespace LittleCiv.Core
         {
             var cost = DefenseFacilityResolver.GoldCost(type);
             if (city.Gold < cost) return false;
-            if (type != DefenseFacilityType.ModernDefense) return true;
-            var economy = CityEconomyResolver.CalculateBreakdown(state, city);
-            return city.Gold >= cost + DefenseFacilityResolver.ModernUpkeep &&
-                   economy.Gold.Total >= economy.UnitUpkeep + economy.FacilityUpkeep +
-                       DefenseFacilityResolver.ModernUpkeep;
+            var upkeep = type == DefenseFacilityType.ModernDefense
+                ? DefenseFacilityResolver.ModernUpkeep
+                : 0;
+            return NeutralEconomyPlanner.Evaluate(state, city,
+                additionalGoldUpkeep: upkeep, immediateGoldCost: cost).IsSafe;
         }
 
         private static DefenseFacilityType? NextType(CityState city, DefenseFacilityType current)

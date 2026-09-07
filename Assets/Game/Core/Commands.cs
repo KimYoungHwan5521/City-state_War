@@ -22,7 +22,8 @@ namespace LittleCiv.Core
         StartDefenseFacility = 14,
         SetModernDefenseActive = 15,
         StartNuclearProject = 16,
-        PickupGroundFood = 17
+        PickupGroundFood = 17,
+        SetCitizenAutoAssignment = 18
     }
 
     [Serializable]

@@ -10,6 +10,14 @@ namespace LittleCiv.Core
         public readonly List<GameCommand> Movements = new List<GameCommand>();
     }
 
+    public sealed class NeutralForceTarget
+    {
+        public int Combat;
+        public int Supply;
+        public bool IsThreatened;
+        public bool IsCriticalThreat;
+    }
+
     public static class NeutralMilitaryResolver
     {
         public static NeutralMilitaryResult IssueOrders(GameState state)
@@ -209,17 +217,57 @@ namespace LittleCiv.Core
             return reversed;
         }
 
-        public static int CombatTarget(NeutralCitySpecialization specialization)
+        public static int CombatTarget(NeutralCitySpecialization specialization,
+            NeutralDevelopmentStage stage)
         {
-            if (specialization == NeutralCitySpecialization.Military) return 3;
-            if (specialization == NeutralCitySpecialization.Commerce) return 2;
-            return 1;
+            if (specialization == NeutralCitySpecialization.Military)
+                return stage == NeutralDevelopmentStage.Late ? 6 :
+                    stage == NeutralDevelopmentStage.Middle ? 3 : 2;
+            if (specialization == NeutralCitySpecialization.Commerce)
+                return stage == NeutralDevelopmentStage.Late ? 4 :
+                    stage == NeutralDevelopmentStage.Middle ? 3 : 2;
+            return stage == NeutralDevelopmentStage.Late ? 3 :
+                stage == NeutralDevelopmentStage.Middle ? 2 : 1;
         }
 
-        public static int SupplyTarget(NeutralCitySpecialization specialization)
+        public static int SupplyTarget(NeutralCitySpecialization specialization,
+            NeutralDevelopmentStage stage)
         {
-            return specialization == NeutralCitySpecialization.Military ||
-                   specialization == NeutralCitySpecialization.Commerce ? 1 : 0;
+            if (specialization != NeutralCitySpecialization.Military) return 0;
+            return stage == NeutralDevelopmentStage.Late ? 2 :
+                stage == NeutralDevelopmentStage.Middle ? 1 : 0;
+        }
+
+        public static NeutralForceTarget ForceTarget(GameState state, CityState city)
+        {
+            var stage = NeutralCityRules.DevelopmentStage(state, city);
+            var result = new NeutralForceTarget
+            {
+                Combat = CombatTarget(city.NeutralSpecialization, stage),
+                Supply = SupplyTarget(city.NeutralSpecialization, stage)
+            };
+            var occupied = state.Districts.Exists(item => item.CityId == city.Id &&
+                item.ControllerId != city.OwnerId);
+            var hostileInside = state.Units.Exists(item => item.OwnerId != city.OwnerId &&
+                item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
+                state.Tiles.Exists(tile => tile.Id == item.TileId && tile.CityId == city.Id));
+            var hostileAdjacent = state.Units.Exists(item => item.OwnerId != city.OwnerId &&
+                item.HitPoints > 0 && IsHostileToCity(state, city, item.OwnerId) &&
+                IsInOrAdjacentToCity(state, city, item.TileId));
+            if (occupied || hostileInside)
+            {
+                result.Combat += 2;
+                if (city.NeutralSpecialization == NeutralCitySpecialization.Military)
+                    result.Supply++;
+                result.IsThreatened = true;
+                result.IsCriticalThreat = true;
+            }
+            else if (hostileAdjacent)
+            {
+                result.Combat++;
+                result.IsThreatened = true;
+            }
+            return result;
         }
 
         private static void PromoteHomeUnits(GameState state, CityState city, NeutralMilitaryResult result)
@@ -230,6 +278,7 @@ namespace LittleCiv.Core
             {
                 var target = NextPromotion(city, units[index].Type);
                 if (!target.HasValue) continue;
+                if (!CanSustainPromotion(state, city, units[index], target.Value)) continue;
                 var command = new GameCommand
                 {
                     CommandId = state.AllocateId(), PlayerId = city.OwnerId, TurnNumber = state.TurnNumber,
@@ -245,8 +294,9 @@ namespace LittleCiv.Core
         {
             var combat = CountUnitsAndTraining(state, city, false);
             var supply = CountUnitsAndTraining(state, city, true);
-            var combatNeeded = Math.Max(0, CombatTarget(city.NeutralSpecialization) - combat);
-            var supplyNeeded = Math.Max(0, SupplyTarget(city.NeutralSpecialization) - supply);
+            var target = ForceTarget(state, city);
+            var combatNeeded = Math.Max(0, target.Combat - combat);
+            var supplyNeeded = Math.Max(0, target.Supply - supply);
             var districts = state.Districts.FindAll(item => item.CityId == city.Id &&
                 item.Type == DistrictType.Military);
             districts.Sort((left, right) => left.Id.CompareTo(right.Id));
@@ -265,7 +315,7 @@ namespace LittleCiv.Core
                     supplyNeeded--;
                 }
                 if (!type.HasValue) break;
-                if (!CanSustainTraining(state, city, type.Value))
+                if (!CanSustainTraining(state, city, type.Value, target.IsCriticalThreat))
                 {
                     if (UnitRules.IsSupply(type.Value)) supplyNeeded++;
                     else combatNeeded++;
@@ -284,29 +334,68 @@ namespace LittleCiv.Core
             }
         }
 
-        public static bool CanSustainTraining(GameState state, CityState city, UnitType type)
+        public static bool CanSustainTraining(GameState state, CityState city, UnitType type,
+            bool emergency = false)
         {
             if (state == null || city == null) return false;
-            var breakdown = CityEconomyResolver.CalculateBreakdown(state, city);
-            var pendingFood = 0;
-            var pendingUpkeep = 0;
-            for (var index = 0; index < state.UnitTrainings.Count; index++)
+            var projection = NeutralEconomyPlanner.Evaluate(state, city,
+                UnitRules.FoodConsumption(type), MaintenanceResolver.UnitUpkeep(type),
+                UnitRules.TrainingGold(type));
+            if (!emergency) return projection.IsSafe;
+            return projection.GoldAfterImmediateCosts >= 0 && projection.FoodNet >= 0 &&
+                   projection.GoldNet >= 0;
+        }
+
+        public static bool CanSustainPromotion(GameState state, CityState city,
+            UnitState unit, UnitType promotedType)
+        {
+            if (state == null || city == null || unit == null) return false;
+            var foodDelta = UnitRules.FoodConsumption(promotedType) - UnitRules.FoodConsumption(unit.Type);
+            var upkeepDelta = MaintenanceResolver.UnitUpkeep(promotedType) -
+                              MaintenanceResolver.UnitUpkeep(unit.Type);
+            var cost = UnitRules.TrainingGold(promotedType) - UnitRules.TrainingGold(unit.Type);
+            return cost >= 0 && NeutralEconomyPlanner.Evaluate(state, city,
+                foodDelta, upkeepDelta, cost).IsSafe;
+        }
+
+        public static DistrictType? SupportNeededForNextForceAction(GameState state, CityState city)
+        {
+            if (state == null || city == null) return null;
+            var units = state.Units.FindAll(item => item.HomeCityId == city.Id &&
+                item.OwnerId == city.OwnerId && item.HitPoints > 0);
+            units.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var index = 0; index < units.Count; index++)
             {
-                var district = state.Districts.Find(item => item.Id == state.UnitTrainings[index].DistrictId);
-                if (district == null || district.CityId != city.Id) continue;
-                pendingFood += UnitRules.FoodConsumption(state.UnitTrainings[index].Type);
-                pendingUpkeep += MaintenanceResolver.UnitUpkeep(state.UnitTrainings[index].Type);
+                var target = NextPromotion(city, units[index].Type);
+                if (!target.HasValue) continue;
+                var projection = NeutralEconomyPlanner.Evaluate(state, city,
+                    UnitRules.FoodConsumption(target.Value) - UnitRules.FoodConsumption(units[index].Type),
+                    MaintenanceResolver.UnitUpkeep(target.Value) - MaintenanceResolver.UnitUpkeep(units[index].Type),
+                    UnitRules.TrainingGold(target.Value) - UnitRules.TrainingGold(units[index].Type));
+                if (projection.FoodNet < NeutralEconomyPlanner.MinimumNet)
+                    return DistrictType.Agriculture;
+                if (projection.GoldNet < NeutralEconomyPlanner.MinimumNet)
+                    return DistrictType.Commerce;
+                break;
             }
-            var projectedFood = breakdown.Food.Total - city.Population -
-                                breakdown.UnitFoodConsumption - pendingFood -
-                                UnitRules.FoodConsumption(type);
-            var projectedGold = breakdown.Gold.Total - breakdown.UnitUpkeep -
-                                breakdown.FacilityUpkeep - pendingUpkeep -
-                                MaintenanceResolver.UnitUpkeep(type);
-            var foodSafe = projectedFood >= 0 || city.StoredFood >= -projectedFood * 4;
-            var goldReserveAfterTraining = city.Gold - UnitRules.TrainingGold(type);
-            var goldSafe = projectedGold >= 0 || goldReserveAfterTraining >= -projectedGold * 8;
-            return foodSafe && goldSafe;
+
+            var combat = CountUnitsAndTraining(state, city, false);
+            var supply = CountUnitsAndTraining(state, city, true);
+            var forceTarget = ForceTarget(state, city);
+            UnitType? training = combat < forceTarget.Combat
+                ? StrongestCombat(city)
+                : supply < forceTarget.Supply
+                    ? StrongestSupply(city)
+                    : (UnitType?)null;
+            if (!training.HasValue) return null;
+            var trainingProjection = NeutralEconomyPlanner.Evaluate(state, city,
+                UnitRules.FoodConsumption(training.Value), MaintenanceResolver.UnitUpkeep(training.Value),
+                UnitRules.TrainingGold(training.Value));
+            if (trainingProjection.FoodNet < NeutralEconomyPlanner.MinimumNet)
+                return DistrictType.Agriculture;
+            if (trainingProjection.GoldNet < NeutralEconomyPlanner.MinimumNet)
+                return DistrictType.Commerce;
+            return null;
         }
 
         private static UnitType? NextPromotion(CityState city, UnitType type)

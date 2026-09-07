@@ -25,32 +25,52 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void MilitaryOrderMatchesDesignAndNoSpecializationCanResearchNuclearFission()
+        public void EverySpecializationFinishesLowerCostResearchBeforeNuclearFission()
         {
-            var order = NeutralResearchResolver.OrderFor(NeutralCitySpecialization.Military);
-            Assert.That(order, Is.EqualTo(new[]
-            {
-                ResearchType.School, ResearchType.IronWorking, ResearchType.Arts,
-                ResearchType.Fortification, ResearchType.Irrigation, ResearchType.Salting,
-                ResearchType.Gunpowder, ResearchType.AdvancedFortification, ResearchType.Canning,
-                ResearchType.Vehicles, ResearchType.ModernDefense
-            }));
             foreach (var specialization in new[]
                      {
                          NeutralCitySpecialization.Military, NeutralCitySpecialization.Science,
                          NeutralCitySpecialization.Culture, NeutralCitySpecialization.Commerce
                      })
-                Assert.That(NeutralResearchResolver.OrderFor(specialization)
-                    .Contains(ResearchType.NuclearFission), Is.False);
+            {
+                var order = NeutralResearchResolver.OrderFor(specialization).ToArray();
+                Assert.That(order.Length, Is.EqualTo(19));
+                Assert.That(order.Distinct().Count(), Is.EqualTo(order.Length));
+                Assert.That(order.Last(), Is.EqualTo(ResearchType.NuclearFission));
+                for (var index = 1; index < order.Length; index++)
+                    Assert.That(ResearchRules.Cost(order[index]),
+                        Is.GreaterThanOrEqualTo(ResearchRules.Cost(order[index - 1])));
+            }
         }
 
         [Test]
         public void DifferentSpecializationsChooseDifferentSecondResearch()
         {
             AssertSecond(NeutralCitySpecialization.Military, ResearchType.IronWorking);
-            AssertSecond(NeutralCitySpecialization.Science, ResearchType.IronWorking);
+            AssertSecond(NeutralCitySpecialization.Science, ResearchType.Irrigation);
             AssertSecond(NeutralCitySpecialization.Culture, ResearchType.Arts);
             AssertSecond(NeutralCitySpecialization.Commerce, ResearchType.Currency);
+        }
+
+        [Test]
+        public void EqualCostResearchPrioritizesEachCitySpecialization()
+        {
+            var military = NeutralResearchResolver.OrderFor(NeutralCitySpecialization.Military).ToList();
+            var culture = NeutralResearchResolver.OrderFor(NeutralCitySpecialization.Culture).ToList();
+            var commerce = NeutralResearchResolver.OrderFor(NeutralCitySpecialization.Commerce).ToList();
+
+            Assert.That(military.IndexOf(ResearchType.IronWorking),
+                Is.LessThan(military.IndexOf(ResearchType.Arts)));
+            Assert.That(military.IndexOf(ResearchType.Gunpowder),
+                Is.LessThan(military.IndexOf(ResearchType.Printing)));
+            Assert.That(culture.IndexOf(ResearchType.Arts),
+                Is.LessThan(culture.IndexOf(ResearchType.IronWorking)));
+            Assert.That(culture.IndexOf(ResearchType.Printing),
+                Is.LessThan(culture.IndexOf(ResearchType.Gunpowder)));
+            Assert.That(commerce.IndexOf(ResearchType.Currency),
+                Is.LessThan(commerce.IndexOf(ResearchType.IronWorking)));
+            Assert.That(commerce.IndexOf(ResearchType.Finance),
+                Is.LessThan(commerce.IndexOf(ResearchType.Gunpowder)));
         }
 
         [Test]
@@ -103,6 +123,30 @@ namespace LittleCiv.Tests
 
             Assert.That(UnitRules.FoodCapacity(state, first), Is.EqualTo(12));
             Assert.That(UnitRules.FoodCapacity(state, second), Is.EqualTo(6));
+        }
+
+        [Test]
+        public void EveryNeutralSpecializationEventuallyCompletesFissionAndBuildsOneFacilityWhenUnopposed()
+        {
+            var state = PrototypeMatchFactory.Create(20260907);
+            var processor = new TurnProcessor();
+            for (var turn = 0; turn < 200; turn++)
+                processor.Resolve(state, new GameCommand[0]);
+
+            var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
+            var cities = state.Cities.Where(item => item.OwnerId == neutral.Id).ToArray();
+            Assert.That(cities.Length, Is.EqualTo(8));
+            Assert.That(cities.All(item => item.NeutralCompletedResearch.Contains(
+                ResearchType.NuclearFission)), Is.True);
+            foreach (var city in cities)
+            {
+                var facilities = state.Districts.Where(item => item.CityId == city.Id &&
+                    item.Type == DistrictType.NuclearFacility).ToArray();
+                Assert.That(facilities.Length, Is.EqualTo(1));
+                Assert.That(facilities[0].RemainingConstructionTurns, Is.Zero);
+                Assert.That(facilities[0].IsOperational, Is.True);
+            }
+            Assert.That(state.NuclearProjects, Is.Empty);
         }
 
         private static void AssertSecond(NeutralCitySpecialization specialization, ResearchType expected)

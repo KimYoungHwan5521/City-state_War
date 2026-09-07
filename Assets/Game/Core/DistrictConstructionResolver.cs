@@ -70,6 +70,8 @@ namespace LittleCiv.Core
                     return NeutralResearchResolver.HasResearch(city, ResearchType.School);
                 case DistrictType.Culture:
                     return NeutralResearchResolver.HasResearch(city, ResearchType.Arts);
+                case DistrictType.NuclearFacility:
+                    return NeutralResearchResolver.HasResearch(city, ResearchType.NuclearFission);
                 default:
                     return false;
             }

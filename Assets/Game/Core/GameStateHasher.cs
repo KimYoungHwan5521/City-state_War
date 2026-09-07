@@ -102,6 +102,7 @@ namespace LittleCiv.Core
                 Add(ref hash, item.WorldR);
                 Add(ref hash, item.Population);
                 Add(ref hash, item.GovernmentCitizens);
+                Add(ref hash, item.CitizenAutoAssignment ? 1 : 0);
                 Add(ref hash, item.Gold);
                 Add(ref hash, item.StoredFood);
                 Add(ref hash, item.GrowthProgress);

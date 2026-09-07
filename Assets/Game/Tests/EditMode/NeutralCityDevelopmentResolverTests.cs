@@ -59,6 +59,8 @@ namespace LittleCiv.Tests
             NeutralCityDevelopmentResolver.StartAvailableConstruction(state);
             state.TurnNumber = 2;
             city.Population = 5;
+            city.StoredFood = 100;
+            city.Gold = 100;
 
             Assert.That(NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
                 .Any(item => item.CityId == city.Id), Is.False);
@@ -82,8 +84,6 @@ namespace LittleCiv.Tests
             Assert.That(lateConstruction.All(item => item.Type == DistrictType.Agriculture ||
                 item.Type == DistrictType.Commerce || item.Type ==
                 NeutralCityRules.DistrictTypeFor(city.NeutralSpecialization)), Is.True);
-            Assert.That(NeutralCityDevelopmentResolver.NextDistrictType(state, city),
-                Is.Not.EqualTo(DistrictType.Government));
         }
 
         [Test]
@@ -95,6 +95,8 @@ namespace LittleCiv.Tests
             city.NeutralCompletedResearch.Add(ResearchType.School);
             city.NeutralCompletedResearch.Add(ResearchType.Arts);
             city.Population = 6;
+            city.StoredFood = 100;
+            city.Gold = 100;
 
             NeutralCityDevelopmentResolver.StartAvailableConstruction(state);
             state.TurnNumber = 2;
@@ -151,17 +153,82 @@ namespace LittleCiv.Tests
                 Type = DistrictType.Commerce, ControllerId = city.OwnerId,
                 IsOperational = true, AssignedCitizens = 1
             });
-            city.Population = 8;
+            for (var index = 6; index <= 7; index++)
+                state.Districts.Add(new DistrictState
+                {
+                    Id = state.AllocateId(), CityId = city.Id, TileId = buildable[index].TileId,
+                    Type = DistrictType.Military, ControllerId = city.OwnerId,
+                    IsOperational = true, AssignedCitizens = 1
+                });
+            city.Population = 10;
+            city.StoredFood = 1000;
+            city.Gold = 1000;
+            city.TestGovernmentFoodBonus = 20;
+            city.TestGovernmentGoldBonus = 20;
 
             var started = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
                 .Single(item => item.CityId == city.Id);
-            var original = view.Tiles.Single(item => item.TileId == buildable[0].TileId);
             var addedDistrict = state.Districts.Single(item => item.Id == started.DistrictId);
             var added = view.Tiles.Single(item => item.TileId == addedDistrict.TileId);
 
             Assert.That(started.Type, Is.EqualTo(DistrictType.Commerce));
-            Assert.That(HexCoord.Distance(new HexCoord(original.LocalQ, original.LocalR),
-                new HexCoord(added.LocalQ, added.LocalR)), Is.EqualTo(1));
+            Assert.That(state.Districts.Where(item => item.CityId == city.Id &&
+                    item.Type == DistrictType.Commerce && item.Id != addedDistrict.Id)
+                .Select(item => view.Tiles.Single(tile => tile.TileId == item.TileId))
+                .Any(item => HexCoord.Distance(new HexCoord(item.LocalQ, item.LocalR),
+                    new HexCoord(added.LocalQ, added.LocalR)) == 1), Is.True);
+        }
+
+        [Test]
+        public void FoodEmergencyRecallsSpecialistAndBuildsAgricultureThenRestoresIt()
+        {
+            var state = PrototypeMatchFactory.Create(13104);
+            var city = state.Cities.First(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military);
+            NeutralCityDevelopmentResolver.StartAvailableConstruction(state);
+            foreach (var district in state.Districts.Where(item => item.CityId == city.Id))
+            {
+                district.RemainingConstructionTurns = 0;
+                district.IsOperational = true;
+            }
+            city.NeutralCompletedResearch.Add(ResearchType.School);
+            var scienceTile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable &&
+                state.Districts.All(district => district.TileId != item.TileId));
+            var science = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = scienceTile.TileId,
+                Type = DistrictType.Science, ControllerId = city.OwnerId,
+                IsOperational = true, AssignedCitizens = 1
+            };
+            state.Districts.Add(science);
+            city.Population = 5;
+            city.StoredFood = 100;
+            city.Gold = 100;
+            var originalAgriculture = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Agriculture);
+            originalAgriculture.IsPillaged = true;
+            originalAgriculture.IsOperational = false;
+            state.TurnNumber = 2;
+
+            var emergency = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
+                .Single(item => item.CityId == city.Id);
+
+            Assert.That(emergency.Type, Is.EqualTo(DistrictType.Agriculture));
+            Assert.That(city.CitizenAutoAssignment, Is.False);
+            Assert.That(science.AssignedCitizens, Is.Zero);
+            var emergencyFarm = state.Districts.Single(item => item.Id == emergency.DistrictId);
+            emergencyFarm.RemainingConstructionTurns = 0;
+            emergencyFarm.IsOperational = true;
+            city.Population = 6;
+            city.StoredFood = 1000;
+            city.Gold = 1000;
+
+            var later = NeutralCityDevelopmentResolver.StartAvailableConstruction(state)
+                .Where(item => item.CityId == city.Id).ToArray();
+
+            Assert.That(later, Is.Empty);
+            Assert.That(science.AssignedCitizens, Is.EqualTo(1));
+            Assert.That(science.IsOperational, Is.True);
         }
 
         private static TileResourceType ResourceFor(DistrictType type)

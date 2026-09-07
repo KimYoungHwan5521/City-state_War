@@ -88,6 +88,107 @@ namespace LittleCiv.Tests
             Assert.That(district.CitizenRemovalPriority, Is.EqualTo(1));
         }
 
+        [Test]
+        public void CitiesStartWithCitizenAutoAssignmentEnabledAndManualChangesAreRejected()
+        {
+            var state = PrototypeMatchFactory.Create(4705);
+            var city = state.Cities[0];
+            var district = AddDistrict(state, city, DistrictType.Science, 0);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.AssignCitizen,
+                SubjectId = district.Id, PrimaryValue = 0, SecondaryValue = -1
+            };
+
+            Assert.That(city.CitizenAutoAssignment, Is.True);
+            Assert.That(CitizenAssignmentResolver.TryAssignManually(state, command), Is.False);
+            Assert.That(district.AssignedCitizens, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void ManualModeCanMoveCitizenFromCompletedDistrictToEmptyDistrict()
+        {
+            var state = PrototypeMatchFactory.Create(4706);
+            var city = state.Cities[0];
+            var source = AddDistrict(state, city, DistrictType.Science, 0);
+            var target = AddDistrict(state, city, DistrictType.Commerce, 0);
+            target.AssignedCitizens = 0;
+            target.IsOperational = false;
+            city.CitizenAutoAssignment = false;
+
+            Assert.That(CitizenAssignmentResolver.TryAssignManually(state, Assignment(state, city, source, 0)),
+                Is.True);
+            Assert.That(CitizenAssignmentResolver.TryAssignManually(state, Assignment(state, city, target, 1)),
+                Is.True);
+            Assert.That(source.AssignedCitizens, Is.Zero);
+            Assert.That(source.IsOperational, Is.False);
+            Assert.That(target.AssignedCitizens, Is.EqualTo(1));
+            Assert.That(target.IsOperational, Is.True);
+        }
+
+        [Test]
+        public void SameTurnManualModeRecallRunsBeforeNewDistrictConstruction()
+        {
+            var state = PrototypeMatchFactory.Create(4707);
+            var city = state.Cities[0];
+            var source = AddDistrict(state, city, DistrictType.Science, 0);
+            AddDistrict(state, city, DistrictType.Culture, 0);
+            AddDistrict(state, city, DistrictType.Commerce, 0);
+            Assert.That(DistrictConstructionResolver.CountFreeCitizens(state, city), Is.Zero);
+            var occupied = state.Districts.Select(item => item.TileId).ToArray();
+            var target = state.MapTopology.FindView(city.Id).Tiles.First(item =>
+                item.IsBuildable && !occupied.Contains(item.TileId)).TileId;
+            var toggle = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.SetCitizenAutoAssignment,
+                SubjectId = city.Id, PrimaryValue = 0
+            };
+            var recall = Assignment(state, city, source, 0);
+            var construction = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.StartDistrict,
+                SubjectId = city.Id, TargetId = target, PrimaryValue = (int)DistrictType.Agriculture
+            };
+
+            new TurnProcessor().Resolve(state, new[] { construction, recall, toggle });
+
+            Assert.That(city.CitizenAutoAssignment, Is.False);
+            Assert.That(source.AssignedCitizens, Is.Zero);
+            Assert.That(state.Districts.Any(item => item.TileId == target &&
+                item.Type == DistrictType.Agriculture && item.AssignedCitizens == 1), Is.True);
+        }
+
+        [Test]
+        public void CitizenAutoAssignmentSurvivesCopyAndAffectsDeterministicHash()
+        {
+            var state = PrototypeMatchFactory.Create(4708);
+            var city = state.Cities[0];
+            var automaticHash = GameStateHasher.Compute(state);
+
+            city.CitizenAutoAssignment = false;
+            var manualHash = GameStateHasher.Compute(state);
+            var copy = GameStateCopy.Clone(state);
+
+            Assert.That(manualHash, Is.Not.EqualTo(automaticHash));
+            Assert.That(copy.Cities.Find(item => item.Id == city.Id).CitizenAutoAssignment, Is.False);
+            Assert.That(GameStateHasher.Compute(copy), Is.EqualTo(manualHash));
+        }
+
+        private static GameCommand Assignment(GameState state, CityState city,
+            DistrictState district, int desired)
+        {
+            return new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.AssignCitizen,
+                SubjectId = district.Id, PrimaryValue = desired,
+                SecondaryValue = desired.CompareTo(district.AssignedCitizens)
+            };
+        }
+
         private static DistrictState AddDistrict(GameState state, CityState city, DistrictType type, int turns)
         {
             var occupiedTiles = state.Districts.Select(item => item.TileId).ToArray();

@@ -16,37 +16,58 @@ namespace LittleCiv.Core
     {
         private static readonly ResearchType[] MilitaryOrder =
         {
-            ResearchType.School, ResearchType.IronWorking, ResearchType.Arts,
-            ResearchType.Fortification, ResearchType.Irrigation, ResearchType.Salting,
-            ResearchType.Gunpowder, ResearchType.AdvancedFortification, ResearchType.Canning,
-            ResearchType.Vehicles, ResearchType.ModernDefense
+            ResearchType.School,
+            ResearchType.IronWorking, ResearchType.Fortification, ResearchType.Irrigation,
+            ResearchType.Currency, ResearchType.Arts,
+            ResearchType.Salting,
+            ResearchType.Gunpowder, ResearchType.AdvancedFortification, ResearchType.Fertilizer,
+            ResearchType.Finance, ResearchType.Printing,
+            ResearchType.Canning,
+            ResearchType.Vehicles, ResearchType.ModernDefense, ResearchType.MechanizedAgriculture,
+            ResearchType.EconomicAdministration, ResearchType.MassMedia,
+            ResearchType.NuclearFission
         };
 
         private static readonly ResearchType[] CultureOrder =
         {
-            ResearchType.School, ResearchType.Arts, ResearchType.Printing, ResearchType.MassMedia,
-            ResearchType.Fortification, ResearchType.Irrigation, ResearchType.Salting,
-            ResearchType.AdvancedFortification, ResearchType.Canning, ResearchType.ModernDefense
+            ResearchType.School,
+            ResearchType.Arts, ResearchType.Irrigation, ResearchType.Currency,
+            ResearchType.Fortification, ResearchType.IronWorking,
+            ResearchType.Salting,
+            ResearchType.Printing, ResearchType.Fertilizer, ResearchType.Finance,
+            ResearchType.AdvancedFortification, ResearchType.Gunpowder,
+            ResearchType.Canning,
+            ResearchType.MassMedia, ResearchType.MechanizedAgriculture,
+            ResearchType.EconomicAdministration, ResearchType.ModernDefense, ResearchType.Vehicles,
+            ResearchType.NuclearFission
         };
 
         private static readonly ResearchType[] CommerceOrder =
         {
-            ResearchType.School, ResearchType.Currency, ResearchType.Finance,
-            ResearchType.EconomicAdministration, ResearchType.Arts, ResearchType.Fortification,
-            ResearchType.Irrigation, ResearchType.Salting, ResearchType.AdvancedFortification,
-            ResearchType.Canning, ResearchType.IronWorking, ResearchType.Gunpowder,
-            ResearchType.Vehicles, ResearchType.ModernDefense
+            ResearchType.School,
+            ResearchType.Currency, ResearchType.Irrigation, ResearchType.Arts,
+            ResearchType.Fortification, ResearchType.IronWorking,
+            ResearchType.Salting,
+            ResearchType.Finance, ResearchType.Fertilizer, ResearchType.Printing,
+            ResearchType.AdvancedFortification, ResearchType.Gunpowder,
+            ResearchType.Canning,
+            ResearchType.EconomicAdministration, ResearchType.MechanizedAgriculture,
+            ResearchType.MassMedia, ResearchType.ModernDefense, ResearchType.Vehicles,
+            ResearchType.NuclearFission
         };
 
         private static readonly ResearchType[] ScienceOrder =
         {
-            ResearchType.School, ResearchType.IronWorking, ResearchType.Arts,
-            ResearchType.Currency, ResearchType.Irrigation, ResearchType.Fortification,
-            ResearchType.Salting, ResearchType.Gunpowder, ResearchType.Printing,
-            ResearchType.Finance, ResearchType.Fertilizer, ResearchType.AdvancedFortification,
-            ResearchType.Canning, ResearchType.Vehicles, ResearchType.MassMedia,
-            ResearchType.EconomicAdministration, ResearchType.MechanizedAgriculture,
-            ResearchType.ModernDefense
+            ResearchType.School,
+            ResearchType.Irrigation, ResearchType.Currency, ResearchType.Arts,
+            ResearchType.IronWorking, ResearchType.Fortification,
+            ResearchType.Salting,
+            ResearchType.Fertilizer, ResearchType.Finance, ResearchType.Printing,
+            ResearchType.Gunpowder, ResearchType.AdvancedFortification,
+            ResearchType.Canning,
+            ResearchType.MechanizedAgriculture, ResearchType.EconomicAdministration,
+            ResearchType.MassMedia, ResearchType.Vehicles, ResearchType.ModernDefense,
+            ResearchType.NuclearFission
         };
 
         public static List<NeutralResearchRecord> Advance(GameState state)

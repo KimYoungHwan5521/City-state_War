@@ -61,6 +61,7 @@ namespace LittleCiv.Core
                     WorldR = item.WorldR,
                     Population = item.Population,
                     GovernmentCitizens = item.GovernmentCitizens,
+                    CitizenAutoAssignment = item.CitizenAutoAssignment,
                     Gold = item.Gold,
                     StoredFood = item.StoredFood,
                     GrowthProgress = item.GrowthProgress,

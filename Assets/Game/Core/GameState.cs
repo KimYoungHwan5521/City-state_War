@@ -169,6 +169,7 @@ namespace LittleCiv.Core
         public int WorldR;
         public int Population = 4;
         public int GovernmentCitizens = 1;
+        public bool CitizenAutoAssignment = true;
         public int Gold = 10;
         public int StoredFood;
         public int GrowthProgress;

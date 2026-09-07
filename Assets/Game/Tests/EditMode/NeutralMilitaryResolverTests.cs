@@ -9,14 +9,28 @@ namespace LittleCiv.Tests
         [Test]
         public void SpecializationsUseTheirProvisionalMinimumDefenseTargets()
         {
-            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Military), Is.EqualTo(3));
-            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Military), Is.EqualTo(1));
-            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Commerce), Is.EqualTo(2));
-            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Commerce), Is.EqualTo(1));
-            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Science), Is.EqualTo(1));
-            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Science), Is.Zero);
-            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Culture), Is.EqualTo(1));
-            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Culture), Is.Zero);
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Early), Is.EqualTo(2));
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Middle), Is.EqualTo(3));
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Late), Is.EqualTo(6));
+            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Early), Is.Zero);
+            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Middle), Is.EqualTo(1));
+            Assert.That(NeutralMilitaryResolver.SupplyTarget(NeutralCitySpecialization.Military,
+                NeutralDevelopmentStage.Late), Is.EqualTo(2));
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Commerce,
+                NeutralDevelopmentStage.Late), Is.EqualTo(4));
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Science,
+                NeutralDevelopmentStage.Middle), Is.EqualTo(2));
+            Assert.That(NeutralMilitaryResolver.CombatTarget(NeutralCitySpecialization.Culture,
+                NeutralDevelopmentStage.Late), Is.EqualTo(3));
+            foreach (var specialization in new[] { NeutralCitySpecialization.Commerce,
+                         NeutralCitySpecialization.Science, NeutralCitySpecialization.Culture })
+                Assert.That(NeutralMilitaryResolver.SupplyTarget(specialization,
+                    NeutralDevelopmentStage.Late), Is.Zero);
         }
 
         [Test]
@@ -27,7 +41,7 @@ namespace LittleCiv.Tests
             var militia = state.Units.Single(item => item.HomeCityId == city.Id);
             militia.RemainingMovement = UnitRules.Movement(militia.Type);
             city.NeutralCompletedResearch.Add(ResearchType.IronWorking);
-            city.Gold = 100;
+            MakeEconomicallySafe(city);
             AddOperationalMilitaryDistrict(state, city);
 
             var result = NeutralMilitaryResolver.IssueOrders(state);
@@ -45,8 +59,7 @@ namespace LittleCiv.Tests
             var city = NeutralCity(state, NeutralCitySpecialization.Military);
             city.NeutralCompletedResearch.Add(ResearchType.IronWorking);
             city.NeutralCompletedResearch.Add(ResearchType.Gunpowder);
-            city.Gold = 100;
-            city.StoredFood = 20;
+            MakeEconomicallySafe(city);
             var first = AddOperationalMilitaryDistrict(state, city);
             var second = AddOperationalMilitaryDistrict(state, city);
 
@@ -67,7 +80,8 @@ namespace LittleCiv.Tests
             var cities = state.Cities.Where(item => item.NeutralSpecialization ==
                 NeutralCitySpecialization.Military).ToArray();
             cities[0].NeutralCompletedResearch.Add(ResearchType.IronWorking);
-            cities[0].Gold = cities[1].Gold = 100;
+            MakeEconomicallySafe(cities[0]);
+            MakeEconomicallySafe(cities[1]);
             state.Units.Single(item => item.HomeCityId == cities[0].Id).RemainingMovement = 2;
             state.Units.Single(item => item.HomeCityId == cities[1].Id).RemainingMovement = 2;
             AddOperationalMilitaryDistrict(state, cities[0]);
@@ -186,8 +200,123 @@ namespace LittleCiv.Tests
                 Is.False);
         }
 
+        [Test]
+        public void TrainingRequiresPlusOneNetAndTwoTurnsOfReserves()
+        {
+            var state = PrototypeMatchFactory.Create(13307);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            city.Gold = 100;
+            city.StoredFood = 100;
+
+            Assert.That(NeutralMilitaryResolver.CanSustainTraining(state, city, UnitType.Militia),
+                Is.False, "기본 생산은 새 민병대 이후 순식량·순금이 0이므로 훈련하면 안 된다.");
+
+            city.TestGovernmentFoodBonus = 1;
+            city.TestGovernmentGoldBonus = 1;
+            Assert.That(NeutralMilitaryResolver.CanSustainTraining(state, city, UnitType.Militia),
+                Is.True);
+
+            city.StoredFood = 0;
+            Assert.That(NeutralMilitaryResolver.CanSustainTraining(state, city, UnitType.Militia),
+                Is.False, "순생산이 안전해도 2턴 식량 비축이 없으면 훈련하면 안 된다.");
+        }
+
+        [Test]
+        public void EconomyForecastIncludesLivingUnitsScheduledToReturnFromLevy()
+        {
+            var state = PrototypeMatchFactory.Create(13308);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            city.Gold = 100;
+            city.StoredFood = 100;
+            var player = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var payment = state.Cities.Single(item => item.OwnerId == player.Id);
+            var returning = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = player.Id, HomeCityId = payment.Id,
+                TileId = state.Districts.Single(item => item.CityId == payment.Id &&
+                    item.Type == DistrictType.Government).TileId,
+                Type = UnitType.Militia, HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia)
+            };
+            state.Units.Add(returning);
+            var levy = new LevyState
+            {
+                Id = state.AllocateId(), MilitaryCityId = city.Id, PlayerId = player.Id,
+                PaymentCityId = payment.Id, EndTurnExclusive = state.TurnNumber + 1
+            };
+            levy.Units.Add(new LevyUnitState { UnitId = returning.Id, OriginalHomeCityId = city.Id });
+            state.Levies.Add(levy);
+
+            var projection = NeutralEconomyPlanner.Evaluate(state, city);
+
+            Assert.That(projection.FoodNet, Is.Zero);
+            Assert.That(projection.GoldNet, Is.Zero);
+            Assert.That(projection.IsSafe, Is.False);
+        }
+
+        [Test]
+        public void HostileUnitInsideTerritoryRaisesTemporaryForceTargetWithoutNonMilitarySupply()
+        {
+            var state = PrototypeMatchFactory.Create(13309);
+            var military = NeutralCity(state, NeutralCitySpecialization.Military);
+            var science = NeutralCity(state, NeutralCitySpecialization.Science);
+            var player = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            foreach (var city in new[] { military, science })
+            {
+                NeutralCityRules.SetFavor(city, player.Id, -10);
+                var tile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable);
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = player.Id,
+                    HomeCityId = state.Cities.Single(item => item.OwnerId == player.Id).Id,
+                    TileId = tile.TileId, Type = UnitType.Militia,
+                    HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia)
+                });
+            }
+
+            var militaryTarget = NeutralMilitaryResolver.ForceTarget(state, military);
+            var scienceTarget = NeutralMilitaryResolver.ForceTarget(state, science);
+
+            Assert.That(militaryTarget.Combat, Is.EqualTo(4));
+            Assert.That(militaryTarget.Supply, Is.EqualTo(1));
+            Assert.That(militaryTarget.IsCriticalThreat, Is.True);
+            Assert.That(scienceTarget.Combat, Is.EqualTo(3));
+            Assert.That(scienceTarget.Supply, Is.Zero);
+            Assert.That(scienceTarget.IsCriticalThreat, Is.True);
+        }
+
+        [Test]
+        public void MilitaryNeutralCitiesRemainEconomicallySafeAfter150IdleTurns()
+        {
+            var state = PrototypeMatchFactory.Create(20260831);
+            var processor = new TurnProcessor();
+            for (var turn = 0; turn < 150; turn++)
+                processor.Resolve(state, new GameCommand[0]);
+
+            var cities = state.Cities.Where(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military).ToArray();
+            foreach (var city in cities)
+            {
+                var projection = NeutralEconomyPlanner.Evaluate(state, city);
+                Assert.That(city.Population, Is.GreaterThan(6));
+                Assert.That(projection.FoodNet, Is.GreaterThanOrEqualTo(1));
+                Assert.That(projection.GoldNet, Is.GreaterThanOrEqualTo(1));
+                Assert.That(city.StoredFood, Is.GreaterThanOrEqualTo(projection.FoodReserveRequired));
+                Assert.That(city.Gold, Is.GreaterThanOrEqualTo(projection.GoldReserveRequired));
+                Assert.That(state.Districts.Where(item => item.CityId == city.Id)
+                    .Any(item => item.IsMaintenanceSuspended), Is.False);
+            }
+        }
+
         private static CityState NeutralCity(GameState state, NeutralCitySpecialization specialization) =>
             state.Cities.First(item => item.NeutralSpecialization == specialization);
+
+        private static void MakeEconomicallySafe(CityState city)
+        {
+            city.Gold = 1000;
+            city.StoredFood = 1000;
+            city.TestGovernmentFoodBonus = 20;
+            city.TestGovernmentGoldBonus = 20;
+        }
 
         private static DistrictState AddOperationalMilitaryDistrict(GameState state, CityState city)
         {

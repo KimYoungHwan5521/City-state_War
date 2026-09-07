@@ -12,6 +12,7 @@ namespace LittleCiv.Tests
             var state = PrototypeMatchFactory.Create(13400);
             var city = NeutralCity(state);
             city.Gold = 100;
+            city.StoredFood = 100;
             city.NeutralCompletedResearch.Add(ResearchType.Fortification);
 
             var wall = NeutralDefenseResolver.StartAvailableConstruction(state)
@@ -33,6 +34,7 @@ namespace LittleCiv.Tests
             var state = PrototypeMatchFactory.Create(13401);
             var cities = state.Cities.Where(item => item.OwnerId == NeutralOwner(state).Id).Take(2).ToArray();
             cities[0].Gold = cities[1].Gold = 100;
+            cities[0].StoredFood = cities[1].StoredFood = 100;
             cities[0].NeutralCompletedResearch.Add(ResearchType.Fortification);
 
             var result = NeutralDefenseResolver.StartAvailableConstruction(state);
@@ -47,7 +49,8 @@ namespace LittleCiv.Tests
             var state = PrototypeMatchFactory.Create(13402);
             var city = NeutralCity(state);
             city.NeutralCompletedResearch.Add(ResearchType.ModernDefense);
-            city.Gold = 21;
+            city.StoredFood = 100;
+            city.Gold = 25;
             var government = state.Districts.Single(item => item.CityId == city.Id &&
                 item.Type == DistrictType.Government);
             var commerceTile = state.MapTopology.FindView(city.Id).Tiles.First(item => item.IsBuildable &&
@@ -66,10 +69,37 @@ namespace LittleCiv.Tests
 
             Assert.That(NeutralDefenseResolver.StartAvailableConstruction(state)
                 .Any(item => item.CityId == city.Id), Is.False);
-            city.Gold = 22;
+            city.Gold = 26;
             Assert.That(NeutralDefenseResolver.StartAvailableConstruction(state)
                 .Single(item => item.CityId == city.Id).BuildingType,
                 Is.EqualTo(DefenseFacilityType.ModernDefense));
+        }
+
+        [Test]
+        public void InactiveModernDefenseReactivatesAfterNeutralEconomyRecovers()
+        {
+            var state = PrototypeMatchFactory.Create(13403);
+            var city = NeutralCity(state);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var facility = new DefenseFacilityState
+            {
+                Id = state.AllocateId(), CityId = city.Id, TileId = government.TileId,
+                Type = DefenseFacilityType.ModernDefense, IsModernDefenseActive = false
+            };
+            state.DefenseFacilities.Add(facility);
+            city.Gold = 0;
+
+            Assert.That(NeutralDefenseResolver.StartAvailableReactivations(state), Is.Empty);
+
+            city.Gold = 100;
+            city.StoredFood = 100;
+            city.TestGovernmentFoodBonus = 20;
+            city.TestGovernmentGoldBonus = 20;
+            Assert.That(NeutralDefenseResolver.StartAvailableReactivations(state),
+                Is.EqualTo(new[] { facility.Id }));
+            Assert.That(facility.RemainingReactivationTurns, Is.EqualTo(2));
+            Assert.That(facility.IsModernDefenseActive, Is.False);
         }
 
         private static PlayerState NeutralOwner(GameState state) =>

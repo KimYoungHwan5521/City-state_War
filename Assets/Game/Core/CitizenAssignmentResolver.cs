@@ -5,6 +5,53 @@ namespace LittleCiv.Core
 {
     public static class CitizenAssignmentResolver
     {
+        public static bool TrySetAutoAssignment(GameState state, GameCommand command)
+        {
+            if (state == null || command == null ||
+                command.Type != GameCommandType.SetCitizenAutoAssignment ||
+                (command.PrimaryValue != 0 && command.PrimaryValue != 1)) return false;
+            var city = FindCity(state, command.SubjectId);
+            if (city == null || city.OwnerId != command.PlayerId) return false;
+            city.CitizenAutoAssignment = command.PrimaryValue != 0;
+            return true;
+        }
+
+        public static bool TryAssignManually(GameState state, GameCommand command)
+        {
+            if (state == null || command == null || command.Type != GameCommandType.AssignCitizen)
+                return false;
+            var district = state.Districts.Find(item => item.Id == command.SubjectId);
+            if (district == null || district.Type == DistrictType.Government) return false;
+            var city = FindCity(state, district.CityId);
+            if (city == null || city.OwnerId != command.PlayerId || city.CitizenAutoAssignment ||
+                district.ControllerId != city.OwnerId) return false;
+
+            var desired = command.PrimaryValue;
+            var maximum = MaximumAssignableCitizens(state, city, district);
+            if (desired < 0 || desired > maximum || desired == district.AssignedCitizens) return false;
+            if (desired > district.AssignedCitizens &&
+                DistrictConstructionResolver.CountFreeCitizens(state, city) <
+                desired - district.AssignedCitizens) return false;
+            if ((district.IsPillaged || district.RemainingRepairTurns > 0) &&
+                desired > district.AssignedCitizens) return false;
+
+            district.AssignedCitizens = desired;
+            if (district.RemainingConstructionTurns <= 0)
+                district.IsOperational = desired > 0 && !district.IsPillaged &&
+                                         district.RemainingRepairTurns <= 0 &&
+                                         !district.IsMaintenanceSuspended;
+            return true;
+        }
+
+        public static int MaximumAssignableCitizens(GameState state, CityState city, DistrictState district)
+        {
+            if (district == null || district.Type == DistrictType.Government) return 0;
+            if (district.RemainingConstructionTurns > 0 || district.Type != DistrictType.Agriculture) return 1;
+            var player = state?.Players.Find(item => item.Id == city.OwnerId);
+            if (player == null || HasResearch(player, ResearchType.MechanizedAgriculture)) return 1;
+            return HasResearch(player, ResearchType.Irrigation) ? 2 : 1;
+        }
+
         public static EntityId RemoveExcessCitizen(GameState state, CityState city)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
@@ -91,6 +138,11 @@ namespace LittleCiv.Core
             for (var index = 0; index < state.Cities.Count; index++)
                 if (state.Cities[index].Id == cityId) return state.Cities[index];
             return null;
+        }
+
+        private static bool HasResearch(PlayerState player, ResearchType type)
+        {
+            return player.CompletedResearch != null && player.CompletedResearch.Contains(type);
         }
     }
 }

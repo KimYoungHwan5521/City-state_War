@@ -429,6 +429,13 @@ namespace LittleCiv.Core
                         resolution.Events.Add(CreateEvent(turnNumber, GameEventType.CommandAccepted,
                             movement.PlayerId, movement.SubjectId, (int)GameCommandType.MoveUnit));
                     }
+                    var neutralReactivations = NeutralDefenseResolver.StartAvailableReactivations(state);
+                    for (var neutralIndex = 0; neutralIndex < neutralReactivations.Count; neutralIndex++)
+                    {
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.ModernDefenseReactivationStarted,
+                            neutralReactivations[neutralIndex]));
+                    }
                     var neutralDefenses = NeutralDefenseResolver.StartAvailableConstruction(state);
                     for (var neutralIndex = 0; neutralIndex < neutralDefenses.Count; neutralIndex++)
                     {
@@ -563,6 +570,7 @@ namespace LittleCiv.Core
                 NuclearProjectState startedNuclearProject = null;
                 NeutralTradeExecution tradeExecution = null;
                 var citizenAssignmentChanged = false;
+                var citizenAutomationChanged = false;
                 var accepted = validation == CommandValidationError.None &&
                                command.Type != GameCommandType.ConfirmTurn &&
                                seenCommandIds.Add(command.CommandId);
@@ -574,8 +582,17 @@ namespace LittleCiv.Core
                 }
                 if (accepted && command.Type == GameCommandType.AssignCitizen)
                 {
-                    citizenAssignmentChanged = AgricultureCitizenResolver.TryAssign(state, command);
+                    citizenAssignmentChanged = CitizenAssignmentResolver.TryAssignManually(state, command);
                     if (!citizenAssignmentChanged)
+                    {
+                        accepted = false;
+                        validation = CommandValidationError.InvalidPayload;
+                    }
+                }
+                if (accepted && command.Type == GameCommandType.SetCitizenAutoAssignment)
+                {
+                    citizenAutomationChanged = CitizenAssignmentResolver.TrySetAutoAssignment(state, command);
+                    if (!citizenAutomationChanged)
                     {
                         accepted = false;
                         validation = CommandValidationError.InvalidPayload;
@@ -1161,13 +1178,21 @@ namespace LittleCiv.Core
             {
                 var phase = GetPhase(left.Type).CompareTo(GetPhase(right.Type));
                 if (phase != 0) return phase;
-                var type = left.Type.CompareTo(right.Type);
+                var type = CommandExecutionOrder(left).CompareTo(CommandExecutionOrder(right));
                 if (type != 0) return type;
                 var player = left.PlayerId.CompareTo(right.PlayerId);
                 if (player != 0) return player;
                 return left.CommandId.CompareTo(right.CommandId);
             });
             return result;
+        }
+
+        private static int CommandExecutionOrder(GameCommand command)
+        {
+            if (command.Type == GameCommandType.SetCitizenAutoAssignment) return -30;
+            if (command.Type == GameCommandType.AssignCitizen)
+                return command.SecondaryValue < 0 ? -20 : -10;
+            return (int)command.Type;
         }
     }
 }

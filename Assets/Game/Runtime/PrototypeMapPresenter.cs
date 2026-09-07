@@ -43,6 +43,8 @@ namespace LittleCiv.Runtime
             new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<GameEntityId, GameCommand> plannedCitizenAssignments =
             new Dictionary<GameEntityId, GameCommand>();
+        private readonly Dictionary<GameEntityId, GameCommand> plannedCitizenAutomation =
+            new Dictionary<GameEntityId, GameCommand>();
         private readonly Dictionary<string, GameCommand> plannedFoodTransfers =
             new Dictionary<string, GameCommand>();
         private readonly Dictionary<GameEntityId, GameCommand> plannedGroundFoodPickups =
@@ -116,6 +118,7 @@ namespace LittleCiv.Runtime
             plannedNuclearProjects.Clear();
             plannedResearch.Clear();
             plannedCitizenAssignments.Clear();
+            plannedCitizenAutomation.Clear();
             plannedFoodTransfers.Clear();
             plannedGroundFoodPickups.Clear();
             plannedNeutralTrades.Clear();
@@ -540,6 +543,7 @@ namespace LittleCiv.Runtime
             plannedNuclearProjects.Clear();
             plannedResearch.Clear();
             plannedCitizenAssignments.Clear();
+            plannedCitizenAutomation.Clear();
             plannedFoodTransfers.Clear();
             plannedGroundFoodPickups.Clear();
             plannedNeutralTrades.Clear();
@@ -748,8 +752,7 @@ namespace LittleCiv.Runtime
                 statusMessage = "자신의 도시에서 건설 가능한 타일에만 건설할 수 있습니다.";
                 return;
             }
-            var freeCitizens = DistrictConstructionResolver.CountFreeCitizens(state, city) -
-                               CountPlannedDistricts(city.Id);
+            var freeCitizens = ProjectedFreeCitizens(city);
             if (freeCitizens <= 0)
             {
                 statusMessage = "건설에 투입할 미배정 시민이 없습니다.";
@@ -792,7 +795,7 @@ namespace LittleCiv.Runtime
             ShowCities(new[] { command.SubjectId });
         }
 
-        private void ReserveAgricultureCitizens(DistrictState district, int desiredCitizens)
+        private void ReserveCitizenAssignment(DistrictState district, int desiredCitizens)
         {
             if (IsManeuverRecommandPhase())
             {
@@ -804,21 +807,64 @@ namespace LittleCiv.Runtime
             var command = new GameCommand
             {
                 CommandId = state.AllocateId(), PlayerId = activePlayerId, TurnNumber = state.TurnNumber,
-                Type = GameCommandType.AssignCitizen, SubjectId = district.Id, PrimaryValue = desiredCitizens
+                Type = GameCommandType.AssignCitizen, SubjectId = district.Id,
+                PrimaryValue = desiredCitizens,
+                SecondaryValue = desiredCitizens.CompareTo(district.AssignedCitizens)
             };
             var result = simulator.Planning.Reserve(command);
             if (result == CommandMutationResult.Accepted) plannedCitizenAssignments[district.Id] = command;
             statusMessage = result == CommandMutationResult.Accepted
-                ? $"농업지구 시민 배치 예약: {desiredCitizens}명."
+                ? $"{DistrictName(district.Type)} 시민 배치 예약: {desiredCitizens}명."
                 : $"시민 명령 거부: {CommandResultName(result)}";
         }
 
-        private void CancelAgricultureCitizens(DistrictState district)
+        private void CancelCitizenAssignment(DistrictState district)
         {
             if (!plannedCitizenAssignments.TryGetValue(district.Id, out var command)) return;
             simulator.Planning.Cancel(activePlayerId, command.CommandId);
             plannedCitizenAssignments.Remove(district.Id);
-            statusMessage = "농업지구 시민 배치 변경을 취소했습니다.";
+            statusMessage = $"{DistrictName(district.Type)} 시민 배치 변경을 취소했습니다.";
+        }
+
+        private void ToggleCitizenAutoAssignment(CityState city)
+        {
+            if (IsManeuverRecommandPhase())
+            {
+                statusMessage = "기동 재명령 중에는 시민 명령을 내릴 수 없습니다.";
+                return;
+            }
+            if (plannedCitizenAutomation.TryGetValue(city.Id, out var previous))
+            {
+                simulator.Planning.Cancel(activePlayerId, previous.CommandId);
+                plannedCitizenAutomation.Remove(city.Id);
+                CancelCitizenPlansForCity(city.Id);
+                statusMessage = $"시민 자동배치 변경 예약을 취소했습니다. 현재: {(city.CitizenAutoAssignment ? "켜짐" : "꺼짐")}";
+                return;
+            }
+            var enable = !city.CitizenAutoAssignment;
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = activePlayerId, TurnNumber = state.TurnNumber,
+                Type = GameCommandType.SetCitizenAutoAssignment, SubjectId = city.Id,
+                PrimaryValue = enable ? 1 : 0
+            };
+            var result = simulator.Planning.Reserve(command);
+            if (result == CommandMutationResult.Accepted) plannedCitizenAutomation[city.Id] = command;
+            statusMessage = result == CommandMutationResult.Accepted
+                ? $"시민 자동배치 {(enable ? "켜기" : "끄기")}를 예약했습니다."
+                : $"시민 자동배치 명령 거부: {CommandResultName(result)}";
+        }
+
+        private void CancelCitizenPlansForCity(GameEntityId cityId)
+        {
+            var districtIds = plannedCitizenAssignments.Keys.Where(id =>
+                state.Districts.Find(item => item.Id == id)?.CityId == cityId).ToList();
+            for (var index = 0; index < districtIds.Count; index++)
+            {
+                var command = plannedCitizenAssignments[districtIds[index]];
+                simulator.Planning.Cancel(activePlayerId, command.CommandId);
+                plannedCitizenAssignments.Remove(districtIds[index]);
+            }
         }
 
         private void ReserveTraining(DistrictState district, UnitType type)
@@ -1176,6 +1222,26 @@ namespace LittleCiv.Runtime
         private int CountPlannedDistricts(GameEntityId cityId)
         {
             return plannedDistricts.Values.Count(command => command.SubjectId == cityId);
+        }
+
+        private int ProjectedFreeCitizens(CityState city)
+        {
+            var free = DistrictConstructionResolver.CountFreeCitizens(state, city) -
+                       CountPlannedDistricts(city.Id);
+            foreach (var pair in plannedCitizenAssignments)
+            {
+                var district = state.Districts.Find(item => item.Id == pair.Key);
+                if (district == null || district.CityId != city.Id) continue;
+                free += district.AssignedCitizens - pair.Value.PrimaryValue;
+            }
+            return Mathf.Max(0, free);
+        }
+
+        private bool IsCitizenAutoAssignmentEnabled(CityState city)
+        {
+            return plannedCitizenAutomation.TryGetValue(city.Id, out var command)
+                ? command.PrimaryValue != 0
+                : city.CitizenAutoAssignment;
         }
 
         private CityState FindActiveHomeCity()
@@ -2171,9 +2237,10 @@ namespace LittleCiv.Runtime
             if (district != null)
             {
                 DrawDistrictActions(x, yOffset, district);
-                var actionOffset = district.Type == DistrictType.Military ? 232f : 190f;
+                var actionOffset = district.Type == DistrictType.Military ? 330f : 255f;
                 if (district.Type == DistrictType.Government)
                 {
+                    actionOffset = 230f;
                     DrawDefenseFacilityActions(x, yOffset + actionOffset, district);
                     actionOffset += 136f;
                 }
@@ -2190,8 +2257,7 @@ namespace LittleCiv.Runtime
                 return;
             }
 
-            var free = DistrictConstructionResolver.CountFreeCitizens(state, city) -
-                       CountPlannedDistricts(city.Id);
+            var free = ProjectedFreeCitizens(city);
             GUI.Label(new Rect(x + 14f, yOffset + 40f, 380f, 22f),
                 $"미개발 도시 타일 | 미배정 시민: {free}");
             GUI.Label(new Rect(x + 14f, yOffset + 64f, 380f, 22f),
@@ -2526,8 +2592,10 @@ namespace LittleCiv.Runtime
             {
                 GUI.Label(new Rect(x + 14f, y + 66f, 380f, 22f),
                     $"건설 중: {district.RemainingConstructionTurns}턴 남음");
+                DrawCitizenAssignmentControls(x, y + 92f, district, city,
+                    city != null && city.OwnerId == activePlayerId && district.ControllerId == activePlayerId);
                 GUI.enabled = city != null && city.OwnerId == activePlayerId && district.ControllerId == activePlayerId;
-                if (GUI.Button(new Rect(x + 14f, y + 94f, 376f, 28f), "진행 중인 건설 취소"))
+                if (GUI.Button(new Rect(x + 14f, y + 154f, 376f, 28f), "진행 중인 건설 취소"))
                 {
                     if (DistrictConstructionResolver.TryCancel(state, activePlayerId, district.Id))
                     {
@@ -2585,28 +2653,38 @@ namespace LittleCiv.Runtime
             }
             if (district.Type == DistrictType.Government)
             {
-                var free = city == null ? 0 : DistrictConstructionResolver.CountFreeCitizens(state, city) -
-                                          CountPlannedDistricts(city.Id);
+                var free = city == null ? 0 : ProjectedFreeCitizens(city);
+                var automatic = city != null && IsCitizenAutoAssignmentEnabled(city);
                 GUI.Label(new Rect(x + 14f, y + 94f, 380f, 22f),
                     $"정부청사 행동: 도시 관리 | 미배정 시민 {free}");
-                GUI.Label(new Rect(x + 14f, y + 120f, 380f, 42f),
-                    "미개발 초록색 타일을 선택해 새 지구를 건설하세요.");
+                GUI.Label(new Rect(x + 14f, y + 120f, 205f, 30f),
+                    $"시민 자동배치: {(automatic ? "켜짐" : "꺼짐")}" +
+                    (plannedCitizenAutomation.ContainsKey(city.Id) ? " (예약)" : string.Empty));
+                GUI.enabled = ownedAndControlled && !state.IsGameOver;
+                if (GUI.Button(new Rect(x + 225f, y + 118f, 165f, 30f),
+                    automatic ? "자동배치 끄기" : "자동배치 켜기"))
+                    ToggleCitizenAutoAssignment(city);
+                GUI.enabled = true;
+                GUI.Label(new Rect(x + 14f, y + 152f, 380f, 42f), automatic
+                    ? "자동배치가 켜져 있습니다. 끄면 지구 시민을 직접 회수·배치할 수 있습니다."
+                    : "수동배치 중입니다. 지구를 선택해 시민을 회수하거나 배치하세요.");
                 return;
             }
+            DrawCitizenAssignmentControls(x, y + 112f, district, city, ownedAndControlled);
             if (district.Type == DistrictType.NuclearFacility)
             {
                 var project = state.NuclearProjects.Find(item => item.DistrictId == district.Id);
                 if (project != null)
                 {
-                    GUI.Label(new Rect(x + 14f, y + 112f, 380f, 42f),
+                    GUI.Label(new Rect(x + 14f, y + 174f, 380f, 42f),
                         project.IsCompleted ? "핵무기 프로젝트: 완료" :
                         $"핵무기 프로젝트: {project.RemainingTurns}턴 남음");
                     return;
                 }
                 if (plannedNuclearProjects.ContainsKey(district.Id))
                 {
-                    GUI.Label(new Rect(x + 14f, y + 112f, 180f, 30f), "핵 프로젝트 예약됨");
-                    if (GUI.Button(new Rect(x + 210f, y + 112f, 180f, 30f), "프로젝트 예약 취소"))
+                    GUI.Label(new Rect(x + 14f, y + 174f, 180f, 30f), "핵 프로젝트 예약됨");
+                    if (GUI.Button(new Rect(x + 210f, y + 174f, 180f, 30f), "프로젝트 예약 취소"))
                         CancelNuclearProject(district);
                     return;
                 }
@@ -2616,7 +2694,7 @@ namespace LittleCiv.Runtime
                               nuclearPlayer.CompletedResearch.Contains(ResearchType.NuclearFission) &&
                               !nuclearPlayer.HasCompletedNuclearProject &&
                               city.Gold >= NuclearProjectResolver.StartGold;
-                if (GUI.Button(new Rect(x + 14f, y + 112f, 376f, 30f),
+                if (GUI.Button(new Rect(x + 14f, y + 174f, 376f, 30f),
                     "핵무기 프로젝트 시작 — 금 10/5턴"))
                     ReserveNuclearProject(district);
                 GUI.enabled = true;
@@ -2631,39 +2709,21 @@ namespace LittleCiv.Runtime
                                  agriculturePlayer.CompletedResearch.Contains(ResearchType.MechanizedAgriculture);
                 if (mechanized)
                 {
-                    GUI.Label(new Rect(x + 14f, y + 112f, 376f, 42f),
+                    GUI.Label(new Rect(x + 14f, y + 174f, 376f, 42f),
                         "기계화 농업: 시민 1명으로 생산량 150%. ");
                     return;
                 }
                 if (!irrigation)
                 {
-                    GUI.Label(new Rect(x + 14f, y + 112f, 376f, 42f),
+                    GUI.Label(new Rect(x + 14f, y + 174f, 376f, 42f),
                         "관개를 연구하면 두 번째 시민을 배치해 생산량을 150%로 높일 수 있습니다.");
                     return;
                 }
-                if (plannedCitizenAssignments.TryGetValue(district.Id, out var citizenPlan))
-                {
-                    GUI.Label(new Rect(x + 14f, y + 112f, 190f, 30f),
-                        $"시민 배치 예약: {citizenPlan.PrimaryValue}명");
-                    if (GUI.Button(new Rect(x + 210f, y + 112f, 180f, 30f), "시민 배치 취소"))
-                        CancelAgricultureCitizens(district);
-                    return;
-                }
-                var freeCitizens = city == null ? 0 : DistrictConstructionResolver.CountFreeCitizens(state, city) -
-                                                   CountPlannedDistricts(city.Id) -
-                                                   CountPlannedAdditionalAgricultureCitizens(city.Id);
-                GUI.enabled = ownedAndControlled && !state.IsGameOver &&
-                              (district.AssignedCitizens > 1 || freeCitizens > 0);
-                var desired = district.AssignedCitizens > 1 ? 1 : 2;
-                if (GUI.Button(new Rect(x + 14f, y + 112f, 376f, 30f),
-                    desired == 2 ? "두 번째 시민 배치 — 생산량 150%" : "두 번째 시민 회수"))
-                    ReserveAgricultureCitizens(district, desired);
-                GUI.enabled = true;
                 return;
             }
             if (district.Type != DistrictType.Military)
             {
-                GUI.Label(new Rect(x + 14f, y + 112f, 380f, 42f),
+                GUI.Label(new Rect(x + 14f, y + 174f, 380f, 42f),
                     "이 지구는 매 턴 산출을 자동 생산합니다.");
                 return;
             }
@@ -2671,12 +2731,12 @@ namespace LittleCiv.Runtime
             var training = state.UnitTrainings.Find(item => item.DistrictId == district.Id);
             if (training != null)
             {
-                GUI.Label(new Rect(x + 14f, y + 112f, 380f, 42f),
+                GUI.Label(new Rect(x + 14f, y + 174f, 380f, 42f),
                     training.IsAwaitingDeployment
                         ? $"{UnitName(training.Type)} - 남은 턴 0턴(공간 없음)"
                         : $"{UnitName(training.Type)} 훈련: {training.RemainingTurns}턴 남음");
                 GUI.enabled = training.OwnerId == activePlayerId;
-                if (GUI.Button(new Rect(x + 14f, y + 140f, 376f, 28f),
+                if (GUI.Button(new Rect(x + 14f, y + 202f, 376f, 28f),
                     $"훈련 취소 — 금 {UnitRules.TrainingGold(training.Type)} 반환"))
                 {
                     if (UnitTrainingResolver.TryCancel(state, activePlayerId, training.Id))
@@ -2690,13 +2750,13 @@ namespace LittleCiv.Runtime
             }
             if (plannedTrainings.TryGetValue(district.Id, out var plannedTraining))
             {
-                GUI.Label(new Rect(x + 14f, y + 112f, 190f, 30f),
+                GUI.Label(new Rect(x + 14f, y + 174f, 190f, 30f),
                     $"훈련 예약: {UnitName((UnitType)plannedTraining.PrimaryValue)}");
-                if (GUI.Button(new Rect(x + 210f, y + 112f, 180f, 30f), "훈련 예약 취소"))
+                if (GUI.Button(new Rect(x + 210f, y + 174f, 180f, 30f), "훈련 예약 취소"))
                     CancelTraining(district);
                 return;
             }
-            GUI.Label(new Rect(x + 14f, y + 112f, 380f, 22f), "군사지구 행동: 병력 훈련");
+            GUI.Label(new Rect(x + 14f, y + 174f, 380f, 22f), "군사지구 행동: 병력 훈련");
             var player = city == null ? null : FindPlayer(city.OwnerId);
             var unlocked = player == null || player.UnlockedUnitTypes == null
                 ? new List<UnitType>()
@@ -2708,23 +2768,42 @@ namespace LittleCiv.Runtime
                 var row = index / 2;
                 GUI.enabled = !state.IsGameOver && ownedAndControlled && district.IsOperational &&
                               city.Gold >= UnitRules.TrainingGold(type);
-                if (GUI.Button(new Rect(x + 14f + (column * 196f), y + 140f + (row * 28f), 180f, 26f),
+                if (GUI.Button(new Rect(x + 14f + (column * 196f), y + 202f + (row * 28f), 180f, 26f),
                     $"{UnitName(type)} | 금 {UnitRules.TrainingGold(type)}/{UnitRules.TrainingTurns(type)}턴"))
                     ReserveTraining(district, type);
             }
             GUI.enabled = true;
         }
 
-        private int CountPlannedAdditionalAgricultureCitizens(GameEntityId cityId)
+        private void DrawCitizenAssignmentControls(float x, float y, DistrictState district,
+            CityState city, bool ownedAndControlled)
         {
-            var count = 0;
-            foreach (var pair in plannedCitizenAssignments)
+            if (city == null) return;
+            var automatic = IsCitizenAutoAssignmentEnabled(city);
+            var desired = plannedCitizenAssignments.TryGetValue(district.Id, out var plan)
+                ? plan.PrimaryValue
+                : district.AssignedCitizens;
+            if (automatic)
             {
-                var district = state.Districts.Find(item => item.Id == pair.Key);
-                if (district != null && district.CityId == cityId)
-                    count += Mathf.Max(0, pair.Value.PrimaryValue - district.AssignedCitizens);
+                GUI.Label(new Rect(x + 14f, y, 376f, 42f),
+                    "시민 자동배치 켜짐 — 정부청사에서 끄면 시민을 직접 변경할 수 있습니다.");
+                return;
             }
-            return count;
+            var maximum = CitizenAssignmentResolver.MaximumAssignableCitizens(state, city, district);
+            var free = ProjectedFreeCitizens(city);
+            GUI.Label(new Rect(x + 14f, y, 376f, 22f),
+                $"수동 시민 배치: {desired}/{maximum} | 자유 시민 {free}" +
+                (plan != null ? " (예약)" : string.Empty));
+            GUI.enabled = ownedAndControlled && !state.IsGameOver && desired > 0;
+            if (GUI.Button(new Rect(x + 14f, y + 24f, 180f, 30f), "시민 1명 회수"))
+                ReserveCitizenAssignment(district, desired - 1);
+            GUI.enabled = ownedAndControlled && !state.IsGameOver && desired < maximum && free > 0 &&
+                          !district.IsPillaged && district.RemainingRepairTurns <= 0;
+            if (GUI.Button(new Rect(x + 210f, y + 24f, 180f, 30f), "시민 1명 배치"))
+                ReserveCitizenAssignment(district, desired + 1);
+            GUI.enabled = true;
+            if (plan != null && GUI.Button(new Rect(x + 300f, y, 90f, 22f), "예약 취소"))
+                CancelCitizenAssignment(district);
         }
 
         private void DrawDefenseFacilityActions(float x, float y, DistrictState district)
