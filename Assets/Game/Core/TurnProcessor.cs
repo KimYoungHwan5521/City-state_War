@@ -53,7 +53,14 @@ namespace LittleCiv.Core
 
             var turnNumber = state.TurnNumber;
             var resolution = new TurnResolution { ResolvedTurnNumber = turnNumber };
-            var sortedCommands = CopyAndSort(commands);
+            var preparedCommands = new List<GameCommand>(commands.Count);
+            for (var commandIndex = 0; commandIndex < commands.Count; commandIndex++)
+            {
+                var owner = state.Players.Find(item => item.Id == commands[commandIndex].PlayerId);
+                if (owner == null || owner.AiStrategy == PlayerAiStrategy.None)
+                    preparedCommands.Add(commands[commandIndex]);
+            }
+            var sortedCommands = CopyAndSort(preparedCommands);
             var seenCommandIds = new HashSet<EntityId>();
             resolution.Events.Add(CreateEvent(turnNumber, GameEventType.TurnStarted));
 
@@ -330,6 +337,16 @@ namespace LittleCiv.Core
                             change.SubjectToId.IsValid ? 1 : 0));
                     }
                     CultureVictoryConditionResolver.UpdateCandidates(state);
+                }
+                if (phase == TurnPhase.Research)
+                {
+                    sortedCommands.AddRange(EasyPlayerAiPlanner.PlanResearch(state));
+                    sortedCommands = CopyAndSort(sortedCommands);
+                }
+                if (phase == TurnPhase.TradeAndOrders)
+                {
+                    sortedCommands.AddRange(EasyPlayerAiPlanner.PlanOrders(state));
+                    sortedCommands = CopyAndSort(sortedCommands);
                 }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 
@@ -939,6 +956,12 @@ namespace LittleCiv.Core
 
                 if (movement.StopReason != MovementStopReason.Completed)
                 {
+                    if (movement.StopReason == MovementStopReason.EnemyOccupied &&
+                        IsAiPlayer(state, command.PlayerId) && movedUnit != null &&
+                        TryResolveAiCombat(state, command, movedUnit, movement, resolution))
+                    {
+                        continue;
+                    }
                     blockedUnits.Add(movement.UnitId);
                     var anticipatedCombat = movement.StopReason == MovementStopReason.EnemyOccupied &&
                                             command.SecondaryValue == 1;
@@ -962,6 +985,47 @@ namespace LittleCiv.Core
             }
 
             return blockedUnits;
+        }
+
+        private bool TryResolveAiCombat(GameState state, GameCommand command,
+            UnitState unit, MovementResult movement, TurnResolution resolution)
+        {
+            if (command.Path == null || movement.StepsMoved >= command.Path.Count) return false;
+            var target = command.Path[movement.StepsMoved];
+            if (!state.Units.Exists(item => item.TileId == target && item.OwnerId != unit.OwnerId &&
+                item.HitPoints > 0)) return false;
+            var combat = CombatResolver.Resolve(state, new CombatEngagementRequest
+            {
+                AttackingPlayerId = unit.OwnerId,
+                AttackingUnitId = unit.Id,
+                TargetTileId = target,
+                BothSidesAreAttackers = false
+            });
+            unit.ManeuverRecommandTurn = 0;
+            resolution.Events.Add(CreateEvent(state.TurnNumber, GameEventType.CombatResolved,
+                combat.AttackingUnitId, combat.TargetTileId,
+                combat.DestroyedUnitIds.Count, combat.AttackerAdvanced ? 1 : 0));
+            for (var index = 0; index < combat.DestroyedUnitIds.Count; index++)
+                resolution.Events.Add(CreateEvent(state.TurnNumber, GameEventType.UnitDestroyed,
+                    combat.DestroyedUnitIds[index], combat.TargetTileId));
+            if (combat.Occupation != null && combat.Occupation.DistrictOccupied)
+            {
+                resolution.Events.Add(CreateEvent(state.TurnNumber, GameEventType.DistrictOccupied,
+                    command.PlayerId, combat.Occupation.DistrictId,
+                    (int)combat.Occupation.DistrictType));
+                if (combat.Occupation.PillageRewardGranted)
+                    resolution.Events.Add(CreateEvent(state.TurnNumber, GameEventType.DistrictPillaged,
+                        command.PlayerId, combat.Occupation.DistrictId,
+                        combat.Occupation.PillagePrimaryReward, combat.Occupation.PillageFoodReward));
+            }
+            return true;
+        }
+
+        private static bool IsAiPlayer(GameState state, EntityId playerId)
+        {
+            var player = state.Players.Find(item => item.Id == playerId);
+            return player != null && player.Slot != PlayerSlot.Neutral &&
+                   player.AiStrategy != PlayerAiStrategy.None;
         }
 
         private static void AddManeuverRequest(
@@ -1192,6 +1256,7 @@ namespace LittleCiv.Core
             if (command.Type == GameCommandType.SetCitizenAutoAssignment) return -30;
             if (command.Type == GameCommandType.AssignCitizen)
                 return command.SecondaryValue < 0 ? -20 : -10;
+            if (command.Type == GameCommandType.TransferFood) return 5;
             return (int)command.Type;
         }
     }

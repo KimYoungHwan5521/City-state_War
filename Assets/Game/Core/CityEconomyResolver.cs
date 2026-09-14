@@ -266,6 +266,41 @@ namespace LittleCiv.Core
             }
         }
 
+        public static int PillageYieldForDistrict(GameState state, DistrictState district)
+        {
+            if (state == null || district == null || district.AssignedCitizens <= 0 ||
+                district.RemainingConstructionTurns > 0 || district.IsMaintenanceSuspended)
+                return 0;
+            var city = state.Cities.Find(item => item.Id == district.CityId);
+            if (city == null) return 0;
+            var player = state.Players.Find(item => item.Id == city.OwnerId);
+            var resource = FindTileResource(state, district.TileId);
+            var adjacency = CountAdjacencyBonus(state, city, district);
+            var subtotal = 0;
+            switch (district.Type)
+            {
+                case DistrictType.Commerce:
+                    subtotal = CommerceGold +
+                               (resource == TileResourceType.Commerce ? CommerceResourceBonus : 0) +
+                               adjacency + (HasResearch(state, city, player, ResearchType.Currency) ? 1 : 0);
+                    if (HasResearch(state, city, player, ResearchType.EconomicAdministration))
+                        subtotal = subtotal * 125 / 100;
+                    return subtotal;
+                case DistrictType.Science:
+                    return ScienceResearch +
+                           (resource == TileResourceType.Science ? ScienceResourceBonus : 0) + adjacency;
+                case DistrictType.Culture:
+                    subtotal = CultureOutput +
+                               (resource == TileResourceType.Culture ? CultureResourceBonus : 0) +
+                               adjacency + (HasResearch(state, city, player, ResearchType.Printing) ? 1 : 0);
+                    if (HasResearch(state, city, player, ResearchType.MassMedia))
+                        subtotal = subtotal * 125 / 100;
+                    return subtotal;
+                default:
+                    return 0;
+            }
+        }
+
         private static CityTilePlacement FindPlacement(CityMapView view, EntityId tileId)
         {
             if (view == null || view.Tiles == null) return null;

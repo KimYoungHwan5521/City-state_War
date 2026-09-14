@@ -11,6 +11,7 @@ namespace LittleCiv.Runtime
     {
         private const float HexRadius = 1f;
         private const float UiScale = 1.5f;
+        [SerializeField] private PlayerAiStrategy opponentAiStrategy = PlayerAiStrategy.Science;
 
         private sealed class UnitRoutePlan
         {
@@ -139,10 +140,15 @@ namespace LittleCiv.Runtime
             combatLog.Clear();
             hasFramedWorld = false;
 
-            state = PrototypeMatchFactory.Create(20260831);
+            state = opponentAiStrategy == PlayerAiStrategy.None
+                ? PrototypeMatchFactory.Create(20260831)
+                : PrototypeMatchFactory.CreateSinglePlayer(20260831, opponentAiStrategy);
             simulator = new SimultaneousTurnSimulator(state);
             activePlayerId = FindPlayer(PlayerSlot.PlayerOne).Id;
-            statusMessage = "1턴부터 새 경기를 시작했습니다.";
+            AutoConfirmAiPlayers();
+            statusMessage = opponentAiStrategy == PlayerAiStrategy.None
+                ? "1턴부터 2인 대전 경기를 시작했습니다."
+                : $"1턴부터 {AiStrategyName(opponentAiStrategy)} AI 상대 경기를 시작했습니다.";
             ShowCities(new[] { state.Cities[0].Id });
         }
 
@@ -471,6 +477,7 @@ namespace LittleCiv.Runtime
                 return;
             }
             if (!simulator.Planning.Confirm(activePlayerId)) return;
+            AutoConfirmAiPlayers();
             if (!simulator.Planning.IsClosed)
             {
                 var next = FindNextUnconfirmedPlayer();
@@ -592,6 +599,7 @@ namespace LittleCiv.Runtime
         {
             var playerOne = FindPlayer(PlayerSlot.PlayerOne);
             var playerTwo = FindPlayer(PlayerSlot.PlayerTwo);
+            AutoConfirmAiPlayers();
             if (!IsManeuverRecommandPhase())
             {
                 activePlayerId = playerOne.Id;
@@ -599,7 +607,8 @@ namespace LittleCiv.Runtime
             }
 
             var playerOneHasOrders = HasManeuverRecommandUnits(playerOne.Id);
-            var playerTwoHasOrders = HasManeuverRecommandUnits(playerTwo.Id);
+            var playerTwoHasOrders = playerTwo.AiStrategy == PlayerAiStrategy.None &&
+                                     HasManeuverRecommandUnits(playerTwo.Id);
             if (!playerOneHasOrders) simulator.Planning.Confirm(playerOne.Id);
             if (!playerTwoHasOrders) simulator.Planning.Confirm(playerTwo.Id);
             activePlayerId = playerOneHasOrders ? playerOne.Id : playerTwo.Id;
@@ -608,7 +617,8 @@ namespace LittleCiv.Runtime
         private PlayerState FindNextUnconfirmedPlayer()
         {
             var players = state.Players
-                .Where(item => item.Slot != PlayerSlot.Neutral)
+                .Where(item => item.Slot != PlayerSlot.Neutral &&
+                               item.AiStrategy == PlayerAiStrategy.None)
                 .OrderBy(item => item.Slot)
                 .ToList();
             return players.Find(item =>
@@ -618,7 +628,20 @@ namespace LittleCiv.Runtime
         private bool IsManeuverRecommandPhase()
         {
             return state.Units.Any(item =>
-                item.ManeuverRecommandTurn == state.TurnNumber && item.RemainingMovement > 0);
+                item.ManeuverRecommandTurn == state.TurnNumber && item.RemainingMovement > 0 &&
+                FindPlayer(item.OwnerId)?.AiStrategy == PlayerAiStrategy.None);
+        }
+
+        private void AutoConfirmAiPlayers()
+        {
+            if (simulator?.Planning == null) return;
+            for (var index = 0; index < state.Players.Count; index++)
+            {
+                var player = state.Players[index];
+                if (player.Slot != PlayerSlot.Neutral && player.AiStrategy != PlayerAiStrategy.None &&
+                    simulator.Planning.GetConfirmation(player.Id) == TurnConfirmationReason.None)
+                    simulator.Planning.Confirm(player.Id);
+            }
         }
 
         private bool HasManeuverRecommandUnits(GameEntityId playerId)
@@ -2085,6 +2108,25 @@ namespace LittleCiv.Runtime
             GUI.enabled = true;
             if (GUI.Button(new Rect(rect.x + 14f, rect.y + 278f, 376f, 32f), "1턴부터 경기 다시 시작"))
                 RestartMatch();
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 318f, 376f, 24f),
+                $"다음 재시작 상대: {AiStrategyName(opponentAiStrategy)}");
+            if (GUI.Button(new Rect(rect.x + 14f, rect.y + 346f, 118f, 30f), "과학형 AI"))
+            { opponentAiStrategy = PlayerAiStrategy.Science; RestartMatch(); }
+            if (GUI.Button(new Rect(rect.x + 143f, rect.y + 346f, 118f, 30f), "문화형 AI"))
+            { opponentAiStrategy = PlayerAiStrategy.Culture; RestartMatch(); }
+            if (GUI.Button(new Rect(rect.x + 272f, rect.y + 346f, 118f, 30f), "정복형 AI"))
+            { opponentAiStrategy = PlayerAiStrategy.Conquest; RestartMatch(); }
+        }
+
+        private static string AiStrategyName(PlayerAiStrategy strategy)
+        {
+            switch (strategy)
+            {
+                case PlayerAiStrategy.Science: return "과학형";
+                case PlayerAiStrategy.Culture: return "문화형";
+                case PlayerAiStrategy.Conquest: return "정복형";
+                default: return "사람 플레이어";
+            }
         }
 
         private static void DrawYieldCheatRow(Rect rect, float y, string label, ref int bonus, int baseValue)

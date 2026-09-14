@@ -93,6 +93,22 @@ namespace LittleCiv.Core
             return state;
         }
 
+        public static GameState CreateSinglePlayer(long matchSeed, PlayerAiStrategy strategy)
+        {
+            if (strategy == PlayerAiStrategy.None)
+                strategy = StrategyFromSeed(matchSeed);
+            var state = Create(matchSeed);
+            var playerTwo = state.Players.Find(item => item.Slot == PlayerSlot.PlayerTwo);
+            playerTwo.AiStrategy = strategy;
+            return state;
+        }
+
+        public static PlayerAiStrategy StrategyFromSeed(long matchSeed)
+        {
+            var value = (int)((matchSeed % 3 + 3) % 3);
+            return (PlayerAiStrategy)(value + 1);
+        }
+
         private static void AddStartingGovernmentAndMilitia(GameState state)
         {
             foreach (var city in state.Cities)

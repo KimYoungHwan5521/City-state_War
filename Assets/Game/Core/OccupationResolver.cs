@@ -32,6 +32,7 @@ namespace LittleCiv.Core
                 var occupier = state.Units.Find(item => item.TileId == district.TileId &&
                     item.OwnerId == district.ControllerId && item.HitPoints > 0 && item.RemainingMovement > 0);
                 if (occupier == null) continue;
+                var pillageYield = CityEconomyResolver.PillageYieldForDistrict(state, district);
                 district.IsPillaged = true;
                 var result = new OccupationResult
                 {
@@ -39,7 +40,7 @@ namespace LittleCiv.Core
                     DistrictId = district.Id, DistrictType = district.Type,
                     DistrictOccupied = true
                 };
-                ApplyPillageReward(state, district, city, occupier.OwnerId, result);
+                ApplyPillageReward(state, district, city, occupier.OwnerId, result, pillageYield);
                 var owner = state.Players.Find(item => item.Id == city.OwnerId);
                 if (owner != null && owner.Slot == PlayerSlot.Neutral)
                     NeutralCityRules.SetFavor(city, occupier.OwnerId, -10);
@@ -93,6 +94,8 @@ namespace LittleCiv.Core
             var grantsPillageReward = city != null && !cityAlreadyOccupied && occupyingPlayerId != city.OwnerId &&
                                       district.Type != DistrictType.Government && !district.IsPillaged &&
                                       district.RemainingConstructionTurns <= 0 && canPillage;
+            var pillageYield = grantsPillageReward
+                ? CityEconomyResolver.PillageYieldForDistrict(state, district) : 0;
             district.ControllerId = occupyingPlayerId;
             district.IsOperational = false;
             if (city != null && occupyingPlayerId != city.OwnerId)
@@ -107,7 +110,7 @@ namespace LittleCiv.Core
             result.DistrictOccupied = true;
             if (grantsPillageReward)
             {
-                ApplyPillageReward(state, district, city, occupyingPlayerId, result);
+                ApplyPillageReward(state, district, city, occupyingPlayerId, result, pillageYield);
                 var owner = state.Players.Find(item => item.Id == city.OwnerId);
                 if (owner != null && owner.Slot == PlayerSlot.Neutral)
                     NeutralCityRules.SetFavor(city, occupyingPlayerId, -10);
@@ -137,7 +140,8 @@ namespace LittleCiv.Core
             DistrictState district,
             CityState victimCity,
             EntityId occupyingPlayerId,
-            OccupationResult result)
+            OccupationResult result,
+            int pillageYield)
         {
             var receivingCity = FindReceivingCity(state, occupyingPlayerId, district.TileId);
             if (receivingCity == null) return;
@@ -150,16 +154,16 @@ namespace LittleCiv.Core
                     receivingCity.StoredFood += result.PillageFoodReward;
                     break;
                 case DistrictType.Commerce:
-                    result.PillagePrimaryReward = 6;
-                    receivingCity.Gold += 6;
+                    result.PillagePrimaryReward = pillageYield;
+                    receivingCity.Gold += pillageYield;
                     break;
                 case DistrictType.Science:
-                    result.PillagePrimaryReward = 4;
-                    receivingCity.ResearchPoints += 4;
+                    result.PillagePrimaryReward = pillageYield;
+                    receivingCity.ResearchPoints += pillageYield;
                     break;
                 case DistrictType.Culture:
-                    result.PillagePrimaryReward = 4;
-                    AddCultureInfluence(victimCity, occupyingPlayerId, 4);
+                    result.PillagePrimaryReward = pillageYield;
+                    AddCultureInfluence(victimCity, occupyingPlayerId, pillageYield);
                     break;
                 case DistrictType.Military:
                     result.PillagePrimaryReward = 3;

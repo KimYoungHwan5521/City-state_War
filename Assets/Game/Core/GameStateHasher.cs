@@ -86,6 +86,9 @@ namespace LittleCiv.Core
                 Add(ref hash, item.HasUnlockedSelfLearningAI ? 1 : 0);
                 Add(ref hash, item.HasCompletedSelfLearningAI ? 1 : 0);
                 Add(ref hash, item.HasMetCultureVictoryCondition ? 1 : 0);
+                Add(ref hash, (int)item.AiStrategy);
+                Add(ref hash, item.AiLowEnemyMilitaryTurns);
+                Add(ref hash, item.AiStalledAttackTurns);
             }
         }
 

@@ -144,7 +144,8 @@ namespace LittleCiv.Core
             switch (type)
             {
                 case DistrictType.Agriculture:
-                case DistrictType.Commerce: return 2;
+                    return 2;
+                case DistrictType.Commerce:
                 case DistrictType.Science:
                 case DistrictType.Culture:
                 case DistrictType.Military: return 3;

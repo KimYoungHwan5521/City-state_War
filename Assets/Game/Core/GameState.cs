@@ -84,10 +84,18 @@ namespace LittleCiv.Core
         Late = 3
     }
 
+    public enum PlayerAiStrategy
+    {
+        None = 0,
+        Science = 1,
+        Culture = 2,
+        Conquest = 3
+    }
+
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 30;
+        public const int CurrentSchemaVersion = 31;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -150,6 +158,9 @@ namespace LittleCiv.Core
         public bool HasUnlockedSelfLearningAI;
         public bool HasCompletedSelfLearningAI;
         public bool HasMetCultureVictoryCondition;
+        public PlayerAiStrategy AiStrategy;
+        public int AiLowEnemyMilitaryTurns;
+        public int AiStalledAttackTurns;
     }
 
     [Serializable]

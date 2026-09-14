@@ -45,7 +45,10 @@ namespace LittleCiv.Core
                     HasCompletedNuclearProject = item.HasCompletedNuclearProject,
                     HasUnlockedSelfLearningAI = item.HasUnlockedSelfLearningAI,
                     HasCompletedSelfLearningAI = item.HasCompletedSelfLearningAI,
-                    HasMetCultureVictoryCondition = item.HasMetCultureVictoryCondition
+                    HasMetCultureVictoryCondition = item.HasMetCultureVictoryCondition,
+                    AiStrategy = item.AiStrategy,
+                    AiLowEnemyMilitaryTurns = item.AiLowEnemyMilitaryTurns,
+                    AiStalledAttackTurns = item.AiStalledAttackTurns
                 });
             }
 

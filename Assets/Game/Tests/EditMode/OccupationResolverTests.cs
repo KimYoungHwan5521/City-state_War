@@ -177,8 +177,8 @@ namespace LittleCiv.Tests
                 new TurnProcessor().Resolve(fixture.State, new List<GameCommand>()));
         }
 
-        [TestCase(DistrictType.Commerce, 6)]
-        [TestCase(DistrictType.Science, 4)]
+        [TestCase(DistrictType.Commerce, 2)]
+        [TestCase(DistrictType.Science, 2)]
         [TestCase(DistrictType.NuclearFacility, 10)]
         public void FirstOccupationGrantsRecordedPrimaryReward(DistrictType type, int amount)
         {
@@ -192,6 +192,43 @@ namespace LittleCiv.Tests
             Assert.That(result.PillageRewardGranted, Is.True);
             Assert.That(result.PillagePrimaryReward, Is.EqualTo(amount));
             Assert.That(after - before, Is.EqualTo(amount));
+        }
+
+        [Test]
+        public void CommercePillageUsesResourceAdjacencyResearchAndMultiplierBonuses()
+        {
+            var fixture = CreateFixture(DistrictType.Commerce, includeDefender: false);
+            var defender = fixture.State.Players.Single(item => item.Id == fixture.DefenderPlayer);
+            defender.CompletedResearch.Add(ResearchType.Currency);
+            defender.CompletedResearch.Add(ResearchType.Finance);
+            defender.CompletedResearch.Add(ResearchType.EconomicAdministration);
+            fixture.State.Tiles.Single(item => item.Id == fixture.TargetTile).ResourceType =
+                TileResourceType.Commerce;
+
+            var adjacentTile = fixture.State.AllocateId();
+            fixture.State.Tiles.Add(new TileState
+            {
+                Id = adjacentTile, CityId = fixture.District.CityId,
+                Q = 2, ControllerId = fixture.DefenderPlayer
+            });
+            fixture.State.MapTopology.FindView(fixture.District.CityId).Tiles.Add(
+                new CityTilePlacement { TileId = adjacentTile, LocalQ = 2, LocalR = 0 });
+            fixture.State.Districts.Add(new DistrictState
+            {
+                Id = fixture.State.AllocateId(), CityId = fixture.District.CityId,
+                TileId = adjacentTile, Type = DistrictType.Commerce,
+                ControllerId = fixture.DefenderPlayer, IsOperational = true,
+                AssignedCitizens = 1
+            });
+            var attackerCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.AttackerPlayer);
+            var startingGold = attackerCity.Gold;
+
+            var result = OccupationResolver.Resolve(
+                fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
+
+            // (base 2 + resource 2 + Finance adjacency 2 + Currency 1) * 125% = 8.
+            Assert.That(result.PillagePrimaryReward, Is.EqualTo(8));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(8));
         }
 
         [Test]
@@ -230,7 +267,7 @@ namespace LittleCiv.Tests
         }
 
         [Test]
-        public void CulturePillageAddsFourConversionProgressInVictimCity()
+        public void CulturePillageAddsCurrentDistrictProductionAsConversionProgress()
         {
             var fixture = CreateFixture(DistrictType.Culture, includeDefender: false);
             var victimCity = fixture.State.Cities.Single(item => item.OwnerId == fixture.DefenderPlayer);
@@ -238,7 +275,7 @@ namespace LittleCiv.Tests
             OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
 
             Assert.That(victimCity.CultureInfluences.Single(item =>
-                item.CultureOwnerId == fixture.AttackerPlayer).ConversionProgress, Is.EqualTo(4));
+                item.CultureOwnerId == fixture.AttackerPlayer).ConversionProgress, Is.EqualTo(2));
         }
 
         [Test]
@@ -252,7 +289,7 @@ namespace LittleCiv.Tests
             OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
 
             Assert.That(influence.PreferredCitizens, Is.EqualTo(1));
-            Assert.That(influence.ConversionProgress, Is.EqualTo(2));
+            Assert.That(influence.ConversionProgress, Is.Zero);
             Assert.That(CityCultureRules.NativeCitizens(victimCity), Is.EqualTo(3));
         }
 
@@ -267,7 +304,7 @@ namespace LittleCiv.Tests
 
             var repeated = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             Assert.That(repeated.PillageRewardGranted, Is.False);
-            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(6));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(2));
 
             OccupationResolver.Resolve(fixture.State, fixture.DefenderPlayer, fixture.TargetTile);
             var repair = new GameCommand
@@ -279,10 +316,11 @@ namespace LittleCiv.Tests
             Assert.That(DistrictConstructionResolver.TryStartRepair(fixture.State, repair, out _), Is.True);
             DistrictConstructionResolver.AdvanceRepairs(fixture.State);
             DistrictConstructionResolver.AdvanceRepairs(fixture.State);
+            DistrictConstructionResolver.AdvanceRepairs(fixture.State);
 
             var afterRepair = OccupationResolver.Resolve(fixture.State, fixture.AttackerPlayer, fixture.TargetTile);
             Assert.That(afterRepair.PillageRewardGranted, Is.True);
-            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(12));
+            Assert.That(attackerCity.Gold - startingGold, Is.EqualTo(4));
         }
 
         private static Fixture CreateFixture(DistrictType type, bool includeDefender)
