@@ -89,6 +89,10 @@ namespace LittleCiv.Core
                 Add(ref hash, (int)item.AiStrategy);
                 Add(ref hash, item.AiLowEnemyMilitaryTurns);
                 Add(ref hash, item.AiStalledAttackTurns);
+                Add(ref hash, item.AiLastEnemyCombatPower);
+                Add(ref hash, item.AiLastOccupiedEnemyDistricts);
+                Add(ref hash, item.AiLastGovernmentDistance);
+                Add(ref hash, item.AiNuclearPivot ? 1 : 0);
             }
         }
 

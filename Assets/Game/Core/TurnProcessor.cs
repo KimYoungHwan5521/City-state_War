@@ -439,6 +439,13 @@ namespace LittleCiv.Core
                             training.DistrictId, training.Id,
                             (int)training.Type, training.RemainingTurns));
                     }
+                    for (var neutralIndex = 0; neutralIndex < neutralMilitary.FoodTransfers.Count; neutralIndex++)
+                    {
+                        var transfer = neutralMilitary.FoodTransfers[neutralIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.UnitFoodTransferred,
+                            transfer.SupplierId, transfer.ReceiverId, transfer.Amount));
+                    }
                     for (var neutralIndex = 0; neutralIndex < neutralMilitary.Movements.Count; neutralIndex++)
                     {
                         var movement = neutralMilitary.Movements[neutralIndex];
@@ -993,7 +1000,8 @@ namespace LittleCiv.Core
             if (command.Path == null || movement.StepsMoved >= command.Path.Count) return false;
             var target = command.Path[movement.StepsMoved];
             if (!state.Units.Exists(item => item.TileId == target && item.OwnerId != unit.OwnerId &&
-                item.HitPoints > 0)) return false;
+                item.HitPoints > 0 &&
+                UnitDiplomacyRules.AreHostile(state, unit.OwnerId, item.OwnerId, target))) return false;
             var combat = CombatResolver.Resolve(state, new CombatEngagementRequest
             {
                 AttackingPlayerId = unit.OwnerId,

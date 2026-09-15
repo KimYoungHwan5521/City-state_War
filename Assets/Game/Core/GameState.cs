@@ -95,7 +95,7 @@ namespace LittleCiv.Core
     [Serializable]
     public sealed class GameState
     {
-        public const int CurrentSchemaVersion = 31;
+        public const int CurrentSchemaVersion = 32;
 
         public int SchemaVersion = CurrentSchemaVersion;
         public long MatchSeed;
@@ -161,6 +161,10 @@ namespace LittleCiv.Core
         public PlayerAiStrategy AiStrategy;
         public int AiLowEnemyMilitaryTurns;
         public int AiStalledAttackTurns;
+        public int AiLastEnemyCombatPower = -1;
+        public int AiLastOccupiedEnemyDistricts = -1;
+        public int AiLastGovernmentDistance = int.MaxValue;
+        public bool AiNuclearPivot;
     }
 
     [Serializable]

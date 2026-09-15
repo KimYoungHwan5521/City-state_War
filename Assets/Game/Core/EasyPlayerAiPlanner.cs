@@ -146,7 +146,8 @@ namespace LittleCiv.Core
                 ResearchType.Vehicles
             });
             if (conquestCore != ResearchType.None) return conquestCore;
-            if (player.AiStalledAttackTurns >= 10 || EnemyHasNuclearProgram(state, player.Id))
+            if (player.AiNuclearPivot || player.AiStalledAttackTurns >= 10 ||
+                EnemyHasNuclearProgram(state, player.Id))
                 return FirstAvailable(player, new[] { ResearchType.NuclearFission });
             cultureLossTurns = EstimatedCultureLossTurns(state, player.Id);
             if (cultureLossTurns >= 0 && cultureLossTurns <= 15)
@@ -201,7 +202,17 @@ namespace LittleCiv.Core
         private static void AddResearch(GameState state, PlayerState player, CityState city,
             PlayerAiAssessment assessment, List<GameCommand> result)
         {
-            if (player.CurrentResearch != ResearchType.None) return;
+            if (player.AiStrategy == PlayerAiStrategy.Conquest &&
+                (player.AiStalledAttackTurns >= 10 || EnemyHasNuclearProgram(state, player.Id)))
+                player.AiNuclearPivot = true;
+            if (player.CurrentResearch != ResearchType.None)
+            {
+                if (player.AiNuclearPivot && player.CurrentResearch != ResearchType.NuclearFission &&
+                    IsAvailable(player, ResearchType.NuclearFission))
+                    result.Add(Command(state, player.Id, GameCommandType.SelectResearch,
+                        primary: (int)ResearchType.NuclearFission));
+                return;
+            }
             var research = ChooseResearch(state, player, city, assessment);
             if (research == ResearchType.None) return;
             result.Add(Command(state, player.Id, GameCommandType.SelectResearch,
@@ -222,6 +233,11 @@ namespace LittleCiv.Core
         private static void AddDistricts(GameState state, PlayerState player, CityState city,
             PlayerAiAssessment assessment, List<GameCommand> result)
         {
+            var militaryEmergency = (player.AiStrategy == PlayerAiStrategy.Science ||
+                                     player.AiStrategy == PlayerAiStrategy.Culture) &&
+                                    assessment.ThreatLevel >= PlayerAiThreatLevel.Direct;
+            if (AssignThreatMilitaryCitizen(state, player, city, assessment, result)) return;
+            if (RestoreStrategyCitizenAfterThreat(state, player, city, assessment, result)) return;
             if (AssignCultureDefenseCitizen(state, player, city, result)) return;
             var free = DistrictConstructionResolver.CountFreeCitizens(state, city);
             if (free <= 0)
@@ -229,7 +245,8 @@ namespace LittleCiv.Core
             if (free <= 0) return;
             free -= ResumePausedConstruction(state, player, city, free, result);
             if (free <= 0) return;
-            free -= AssignIdleSpecializedDistrict(state, player, city, free, result);
+            if (!militaryEmergency)
+                free -= AssignIdleSpecializedDistrict(state, player, city, free, result);
             if (free <= 0) return;
             var reserved = new HashSet<EntityId>();
             while (free-- > 0)
@@ -245,6 +262,58 @@ namespace LittleCiv.Core
                 result.Add(Command(state, player.Id, GameCommandType.StartDistrict,
                     city.Id, tile, (int)type));
             }
+        }
+
+        private static bool AssignThreatMilitaryCitizen(GameState state, PlayerState player,
+            CityState city, PlayerAiAssessment assessment, List<GameCommand> result)
+        {
+            if ((player.AiStrategy != PlayerAiStrategy.Science &&
+                 player.AiStrategy != PlayerAiStrategy.Culture) ||
+                assessment.ThreatLevel < PlayerAiThreatLevel.Direct) return false;
+            var receiver = state.Districts.Find(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Military && item.ControllerId == city.OwnerId &&
+                item.RemainingConstructionTurns <= 0 && !item.IsPillaged &&
+                item.RemainingRepairTurns <= 0 && item.AssignedCitizens <= 0);
+            if (receiver == null) return false;
+            DistrictState donor = null;
+            if (DistrictConstructionResolver.CountFreeCitizens(state, city) <= 0)
+            {
+                donor = SelectCitizenDonor(state, city, DistrictType.Military);
+                if (donor == null) return false;
+            }
+            if (city.CitizenAutoAssignment)
+                result.Add(Command(state, player.Id, GameCommandType.SetCitizenAutoAssignment,
+                    city.Id, primary: 0));
+            if (donor != null)
+                result.Add(Command(state, player.Id, GameCommandType.AssignCitizen,
+                    donor.Id, primary: donor.AssignedCitizens - 1, secondary: -1));
+            result.Add(Command(state, player.Id, GameCommandType.AssignCitizen,
+                receiver.Id, primary: 1, secondary: 1));
+            return true;
+        }
+
+        private static bool RestoreStrategyCitizenAfterThreat(GameState state, PlayerState player,
+            CityState city, PlayerAiAssessment assessment, List<GameCommand> result)
+        {
+            if (city.CitizenAutoAssignment || assessment.ThreatLevel >= PlayerAiThreatLevel.Direct ||
+                (player.AiStrategy != PlayerAiStrategy.Science &&
+                 player.AiStrategy != PlayerAiStrategy.Culture)) return false;
+            var specialized = player.AiStrategy == PlayerAiStrategy.Science
+                ? DistrictType.Science : DistrictType.Culture;
+            var receiver = state.Districts.Find(item => item.CityId == city.Id &&
+                item.Type == specialized && item.ControllerId == city.OwnerId &&
+                item.RemainingConstructionTurns <= 0 && !item.IsPillaged &&
+                item.RemainingRepairTurns <= 0 && item.AssignedCitizens <= 0);
+            var donor = state.Districts.Find(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Military && item.ControllerId == city.OwnerId &&
+                item.RemainingConstructionTurns <= 0 && !item.IsPillaged &&
+                item.RemainingRepairTurns <= 0 && item.AssignedCitizens > 0);
+            if (receiver == null || donor == null) return false;
+            result.Add(Command(state, player.Id, GameCommandType.AssignCitizen,
+                donor.Id, primary: donor.AssignedCitizens - 1, secondary: -1));
+            result.Add(Command(state, player.Id, GameCommandType.AssignCitizen,
+                receiver.Id, primary: 1, secondary: 1));
+            return true;
         }
 
         private static bool AssignCultureDefenseCitizen(GameState state, PlayerState player,
@@ -318,10 +387,16 @@ namespace LittleCiv.Core
             CityState city, PlayerAiAssessment assessment, List<GameCommand> result)
         {
             var projection = NeutralEconomyPlanner.Evaluate(state, city);
+            var nuclearPivotNeedsFacility = player.AiStrategy == PlayerAiStrategy.Conquest &&
+                player.AiNuclearPivot &&
+                player.CompletedResearch.Contains(ResearchType.NuclearFission) &&
+                !HasDistrict(state, city.Id, DistrictType.NuclearFacility);
             var desired = projection.FoodNet < NeutralEconomyPlanner.MinimumNet
                 ? DistrictType.Agriculture
                 : projection.GoldNet < NeutralEconomyPlanner.MinimumNet
                     ? DistrictType.Commerce
+                    : nuclearPivotNeedsFacility
+                        ? DistrictType.NuclearFacility
                     : assessment.ThreatLevel >= PlayerAiThreatLevel.Direct
                         ? DistrictType.Military
                         : DistrictType.Government;
@@ -418,7 +493,8 @@ namespace LittleCiv.Core
             PlayerAiAssessment assessment, List<GameCommand> result)
         {
             var target = ForceTarget(state, player, city, assessment);
-            var combatMissing = Math.Max(0, target.Combat - CountCombatAndTraining(state, player.Id));
+            var currentCombat = CountCombatAndTraining(state, player.Id);
+            var combatMissing = Math.Max(0, target.Combat - currentCombat);
             var supplyMissing = Math.Max(0, target.Supply - CountSupplyAndTraining(state, player.Id));
             if (combatMissing <= 0 && supplyMissing <= 0) return;
             var districts = state.Districts.FindAll(item => item.CityId == city.Id &&
@@ -432,10 +508,17 @@ namespace LittleCiv.Core
             for (var index = 0; index < districts.Count; index++)
             {
                 UnitType type;
-                if (combatMissing > 0)
+                if (player.AiStrategy == PlayerAiStrategy.Conquest && supplyMissing > 0 &&
+                    currentCombat >= 3)
+                {
+                    type = StrongestSupply(player);
+                    supplyMissing--;
+                }
+                else if (combatMissing > 0)
                 {
                     type = StrongestCombat(player);
                     combatMissing--;
+                    currentCombat++;
                 }
                 else if (supplyMissing > 0)
                 {
@@ -476,8 +559,12 @@ namespace LittleCiv.Core
                                   MaintenanceResolver.UnitUpkeep(units[index].Type);
                 var projection = NeutralEconomyPlanner.Evaluate(state, city, foodDelta, upkeepDelta,
                     PlannedImmediateGold(state, result, player.Id) + cost);
+                var scienceEmergencyPromotion = player.AiStrategy == PlayerAiStrategy.Science &&
+                    assessment.ThreatLevel >= PlayerAiThreatLevel.Potential &&
+                    projection.FoodNet >= 0 && projection.GoldNet >= 0;
                 if (cost < 0 || budget < cost || (!projection.IsSafe &&
-                    assessment.ThreatLevel < PlayerAiThreatLevel.Emergency)) continue;
+                    assessment.ThreatLevel < PlayerAiThreatLevel.Emergency &&
+                    !scienceEmergencyPromotion)) continue;
                 result.Add(Command(state, player.Id, GameCommandType.PromoteUnit,
                     units[index].Id, primary: (int)target));
                 budget -= cost;
@@ -569,7 +656,14 @@ namespace LittleCiv.Core
             if (defender == null && government != null)
                 defender = StrongestUnit(units, false);
 
-            var shouldAttack = ShouldAttack(state, player, city, enemyCity, assessment);
+            var relayDefenseTarget = player.AiStrategy == PlayerAiStrategy.Culture
+                ? SelectCultureRelayThreatTarget(state, player, city)
+                : default;
+            var defendingRelay = relayDefenseTarget.IsValid &&
+                                 assessment.ThreatLevel < PlayerAiThreatLevel.Emergency &&
+                                 NeutralEconomyPlanner.Evaluate(state, city).IsSafe;
+            var shouldAttack = !defendingRelay &&
+                               ShouldAttack(state, player, city, enemyCity, assessment);
             var prioritizeCultureRaid = enemyCity.LastCultureProduction > city.LastCultureProduction;
             var attackTarget = shouldAttack
                 ? player.AiStrategy == PlayerAiStrategy.Conquest ||
@@ -579,19 +673,61 @@ namespace LittleCiv.Core
                     : SelectEnemyTarget(state, player, enemyCity, prioritizeCultureRaid)
                 : default;
             var limitedRaid = false;
-            if (!shouldAttack && player.AiStrategy == PlayerAiStrategy.Conquest)
+            var singleUnitRaid = false;
+            var culturePressureRaid = false;
+            if (!defendingRelay && !shouldAttack && player.AiStrategy == PlayerAiStrategy.Conquest)
             {
+                singleUnitRaid = IsLowEnemyMilitaryOpportunity(state, player, assessment);
                 attackTarget = SelectLimitedRaidTarget(state, player, city, enemyCity,
-                    assessment, defender, prioritizeCultureRaid);
+                    assessment, defender, prioritizeCultureRaid, singleUnitRaid);
                 limitedRaid = attackTarget.IsValid;
                 shouldAttack = limitedRaid;
             }
-            var expedition = shouldAttack
-                ? limitedRaid
-                    ? SelectLimitedRaidUnits(state, player.Id, defender, attackTarget)
-                    : SelectExpeditionUnits(state, player.Id, defender, enemyCity.Id)
-                : new HashSet<EntityId>();
-            var supplyDispatched = false;
+            else if (!defendingRelay && !shouldAttack &&
+                     ScienceCultureCounterRaidAllowed(state, player, city, enemyCity))
+            {
+                attackTarget = SelectLimitedRaidTarget(state, player, city, enemyCity,
+                    assessment, defender, true);
+                limitedRaid = attackTarget.IsValid;
+                culturePressureRaid = limitedRaid;
+                shouldAttack = limitedRaid;
+            }
+            var expedition = defendingRelay
+                ? SelectRelayDefenseUnits(state, player.Id, defender, relayDefenseTarget)
+                : shouldAttack
+                    ? limitedRaid
+                        ? culturePressureRaid
+                            ? SelectExpeditionUnits(state, player.Id, defender, enemyCity.Id)
+                            : SelectLimitedRaidUnits(state, player.Id, defender, attackTarget,
+                                singleUnitRaid)
+                        : SelectExpeditionUnits(state, player.Id, defender, enemyCity.Id)
+                    : new HashSet<EntityId>();
+            var cultureVictoryTurns = player.AiStrategy == PlayerAiStrategy.Culture
+                ? EstimatedCultureVictoryTurns(state, player.Id) : -1;
+            var cultureLockdown = cultureVictoryTurns >= 0 && cultureVictoryTurns <= 10;
+            var interceptionTarget = !shouldAttack && player.AiStrategy == PlayerAiStrategy.Science
+                ? ScienceInterceptionTarget(state, player, city, assessment)
+                : default;
+            var escortedCombatUnits = new HashSet<EntityId>();
+            var plannedTraffic = new Dictionary<EntityId, int>();
+            var claimedDefenseTargets = new HashSet<EntityId>();
+            var governmentGuardTarget = player.AiStrategy == PlayerAiStrategy.Science &&
+                                        assessment.ThreatLevel >= PlayerAiThreatLevel.Direct
+                ? 3
+                : 1;
+            var governmentGuards = government == null ? 0 : state.Units.FindAll(item =>
+                item.OwnerId == player.Id && item.TileId == government.TileId && item.HitPoints > 0 &&
+                !UnitRules.IsSupply(item.Type)).Count;
+            var formationIndex = 0;
+            var operationEconomy = NeutralEconomyPlanner.Evaluate(state, city);
+            var operationEconomyFailed = operationEconomy.FoodNet < 0 ||
+                operationEconomy.GoldNet < 0 ||
+                city.StoredFood < operationEconomy.FoodReserveRequired ||
+                city.Gold < operationEconomy.GoldReserveRequired;
+            var occupationHolds = SelectOccupationHoldUnits(state, player, city, enemyCity,
+                government, operationEconomyFailed);
+            var logisticsUnits = new HashSet<EntityId>(expedition);
+            foreach (var heldUnitId in occupationHolds) logisticsUnits.Add(heldUnitId);
             for (var index = 0; index < units.Count; index++)
             {
                 var unit = units[index];
@@ -605,33 +741,71 @@ namespace LittleCiv.Core
                 var canFinishObjective = shouldAttack && attackTarget.IsValid &&
                     CoordinateDistance(state, unit.TileId, attackTarget) <= unit.RemainingMovement &&
                     unit.CarriedFood >= turnsHome;
+                var requiredReturnFood = turnsHome == int.MaxValue ? int.MaxValue : turnsHome + 1;
+                var localSupply = HasLocalAgricultureSupply(state, player.Id, unit.TileId) ||
+                                  HasReachableSupplyUnit(state, unit, requiredReturnFood);
+                var lowFood = unit.CarriedFood < requiredReturnFood && !localSupply;
+                var lowHealth = unit.HitPoints * 5 <= UnitRules.MaximumHitPoints(unit.Type) * 2 &&
+                                !canFinishObjective;
+                var holdsOccupation = occupationHolds.Contains(unit.Id);
+                var supportsOccupation = UnitRules.IsSupply(unit.Type) && occupationHolds.Count > 0;
+                var supportsRelay = defendingRelay && expedition.Contains(unit.Id);
                 var mustRetreat = unitTile != null && unitTile.CityId != city.Id &&
-                    (!shouldAttack || unit.CarriedFood < turnsHome + 1 && !canFinishObjective);
+                    ((!shouldAttack && !supportsRelay && !holdsOccupation && !supportsOccupation) ||
+                     operationEconomyFailed || (lowFood && !holdsOccupation) || lowHealth ||
+                     player.AiStrategy == PlayerAiStrategy.Conquest && player.AiNuclearPivot);
                 if (hostileInside.Count > 0 && !UnitRules.IsSupply(unit.Type))
                     target = hostileInside[0].TileId;
                 else if (mustRetreat && government != null)
                     target = government.TileId;
-                else if (defender != null && unit.Id == defender.Id && government != null &&
-                         unit.TileId != government.TileId)
+                else if (holdsOccupation)
+                    continue;
+                else if (defender != null && unit.Id == defender.Id && government != null)
                     target = government.TileId;
+                else if (government != null && player.AiStrategy == PlayerAiStrategy.Science &&
+                         assessment.ThreatLevel >= PlayerAiThreatLevel.Direct &&
+                         !UnitRules.IsSupply(unit.Type) && governmentGuards < governmentGuardTarget)
+                {
+                    target = government.TileId;
+                    governmentGuards++;
+                }
+                else if (cultureLockdown && !UnitRules.IsSupply(unit.Type))
+                    target = SelectCultureLockdownTarget(state, player, city, unit,
+                        claimedDefenseTargets);
+                else if (defendingRelay && !UnitRules.IsSupply(unit.Type) &&
+                         expedition.Contains(unit.Id))
+                    target = relayDefenseTarget;
                 else if (shouldAttack && !UnitRules.IsSupply(unit.Type) && expedition.Contains(unit.Id))
                     target = attackTarget;
-                else if (shouldAttack && UnitRules.IsSupply(unit.Type) && !supplyDispatched)
+                else if ((shouldAttack || occupationHolds.Count > 0) &&
+                         UnitRules.IsSupply(unit.Type))
                 {
-                    target = SupplyEscortTarget(state, player.Id, city.Id, units);
-                    supplyDispatched = target.IsValid;
+                    target = SupplyEscortTarget(state, unit, city.Id, units, logisticsUnits,
+                        attackTarget, escortedCombatUnits);
                 }
+                else if (interceptionTarget.IsValid && !UnitRules.IsSupply(unit.Type) &&
+                         (defender == null || unit.Id != defender.Id))
+                    target = interceptionTarget;
                 else if (assessment.ThreatLevel >= PlayerAiThreatLevel.Potential &&
                          !UnitRules.IsSupply(unit.Type))
-                    target = SelectDefensiveTarget(state, city, unit);
+                    target = SelectDefensiveTarget(state, player, city, unit, claimedDefenseTargets);
                 if (!target.IsValid || target == unit.TileId) continue;
-                var path = FindMajorWarPath(state, unit, target, city.Id, enemyCity.Id);
+                var path = defendingRelay && target == relayDefenseTarget
+                    ? TacticalPathfinder.FindPath(state, unit, target, null,
+                        plannedTraffic, formationIndex)
+                    : interceptionTarget.IsValid && target == interceptionTarget
+                    ? TacticalPathfinder.FindPath(state, unit, target, null,
+                        plannedTraffic, formationIndex)
+                    : FindMajorWarPath(state, unit, target, city.Id, enemyCity.Id,
+                        plannedTraffic, formationIndex);
                 if (path.Count == 0) continue;
                 AddFoodLoadIfUseful(state, player, city, unit, path.Count, result);
                 var move = Command(state, player.Id, GameCommandType.MoveUnit,
                     unit.Id, target, secondary: HasEnemyAt(state, player.Id, target) ? 1 : 0);
                 move.Path.AddRange(path);
                 result.Add(move);
+                TacticalPathfinder.AddTraffic(plannedTraffic, path);
+                formationIndex++;
             }
         }
 
@@ -674,6 +848,11 @@ namespace LittleCiv.Core
             CityState enemyCity, PlayerAiAssessment assessment)
         {
             if (assessment.ThreatLevel >= PlayerAiThreatLevel.Emergency) return false;
+            if (player.AiStrategy == PlayerAiStrategy.Conquest && player.AiNuclearPivot &&
+                !player.HasCompletedNuclearProject) return false;
+            var cultureVictoryTurns = player.AiStrategy == PlayerAiStrategy.Culture
+                ? EstimatedCultureVictoryTurns(state, player.Id) : -1;
+            if (cultureVictoryTurns >= 0 && cultureVictoryTurns <= 10) return false;
             var own = ExpeditionPower(state, player.Id, city.Id);
             var enemy = AssaultDefensePower(state, player.Id, enemyCity.Id);
             var economy = NeutralEconomyPlanner.Evaluate(state, city);
@@ -707,8 +886,14 @@ namespace LittleCiv.Core
             var preferred = influence == null ? 0 : influence.PreferredCitizens;
             var progress = influence == null ? 0 : influence.ConversionProgress;
             var neededCitizens = target.Population / 2 + 1 - preferred;
-            return neededCitizens <= 0 ? 0 : Math.Max(1,
-                (neededCitizens * 10 - progress + difference - 1) / difference);
+            if (neededCitizens <= 0) return 0;
+            var homeInfluence = home.CultureInfluences.Find(item => item.CultureOwnerId == target.OwnerId);
+            var reclaim = homeInfluence == null ? 0 : homeInfluence.ConversionProgress +
+                homeInfluence.PreferredCitizens * CityCultureRules.ProgressPerCitizen -
+                homeInfluence.ReversionProgress;
+            var required = Math.Max(0, reclaim) +
+                neededCitizens * CityCultureRules.ProgressPerCitizen - progress;
+            return Math.Max(1, (required + difference - 1) / difference);
         }
 
         private static void RestoreCitizenAutomation(GameState state, PlayerState player, CityState city,
@@ -822,6 +1007,11 @@ namespace LittleCiv.Core
             var combat = player.AiStrategy == PlayerAiStrategy.Conquest
                 ? (stage == 0 ? 3 : stage == 1 ? 5 : 8)
                 : (stage == 0 ? 2 : stage == 1 ? 3 : 4);
+            if (player.AiStrategy == PlayerAiStrategy.Conquest && player.AiNuclearPivot)
+                combat = Math.Min(combat, 4);
+            var cultureVictoryTurns = player.AiStrategy == PlayerAiStrategy.Culture
+                ? EstimatedCultureVictoryTurns(state, player.Id) : -1;
+            if (cultureVictoryTurns >= 0 && cultureVictoryTurns <= 10) combat += 2;
             if (player.AiStrategy == PlayerAiStrategy.Conquest)
             {
                 var enemy = state.Players.Find(item => item.Slot != PlayerSlot.Neutral &&
@@ -842,8 +1032,10 @@ namespace LittleCiv.Core
                 ? (stage == 2 ? 2 : 1) : 0;
             combat += assessment == null ? 0 : (int)assessment.ThreatLevel;
             var cultureLossTurns = EstimatedCultureLossTurns(state, player.Id);
-            if (player.AiStrategy != PlayerAiStrategy.Culture && cultureLossTurns >= 0 &&
-                cultureLossTurns <= 25) combat += cultureLossTurns <= 10 ? 3 : 2;
+            if (player.AiStrategy == PlayerAiStrategy.Science && cultureLossTurns >= 0)
+                combat += cultureLossTurns <= 10 ? 5 : 4;
+            else if (player.AiStrategy != PlayerAiStrategy.Culture && cultureLossTurns >= 0 &&
+                     cultureLossTurns <= 25) combat += cultureLossTurns <= 10 ? 3 : 2;
             return (combat, supply);
         }
 
@@ -856,13 +1048,39 @@ namespace LittleCiv.Core
             var enemyCity = state.Cities.Find(item => item.OwnerId != player.Id &&
                 state.Players.Exists(owner => owner.Id == item.OwnerId &&
                     owner.Slot != PlayerSlot.Neutral));
-            var expeditionPresent = enemyCity != null && state.Units.Exists(item =>
-                item.OwnerId == player.Id && item.HitPoints > 0 &&
-                state.Tiles.Exists(tile => tile.Id == item.TileId && tile.CityId == enemyCity.Id));
-            var gainedGround = enemyCity != null && state.Districts.Exists(item =>
-                item.CityId == enemyCity.Id && item.ControllerId == player.Id);
-            player.AiStalledAttackTurns = expeditionPresent && !gainedGround
-                ? player.AiStalledAttackTurns + 1 : 0;
+            if (player.AiStrategy != PlayerAiStrategy.Conquest || enemyCity == null) return;
+            var homeCity = state.Cities.Find(item => item.OwnerId == player.Id);
+            var enemyGovernment = GovernmentTile(state, enemyCity.Id);
+            var expeditionPresent = false;
+            var closestGovernmentDistance = int.MaxValue;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var unit = state.Units[index];
+                if (unit.OwnerId != player.Id || unit.HitPoints <= 0 || UnitRules.IsSupply(unit.Type)) continue;
+                var tile = state.Tiles.Find(item => item.Id == unit.TileId);
+                if (tile == null || homeCity == null || tile.CityId == homeCity.Id) continue;
+                expeditionPresent = true;
+                closestGovernmentDistance = Math.Min(closestGovernmentDistance,
+                    CoordinateDistance(state, unit.TileId, enemyGovernment));
+            }
+            var occupiedDistricts = state.Districts.FindAll(item => item.CityId == enemyCity.Id &&
+                (item.ControllerId == player.Id || item.IsPillaged)).Count;
+            var enemyPower = assessment == null ? CombatPower(state, enemyCity.OwnerId) :
+                assessment.EnemyCombatPower;
+            var initialized = player.AiLastEnemyCombatPower >= 0 &&
+                              player.AiLastOccupiedEnemyDistricts >= 0;
+            var progressed = !initialized ||
+                             occupiedDistricts > player.AiLastOccupiedEnemyDistricts ||
+                             enemyPower < player.AiLastEnemyCombatPower ||
+                             closestGovernmentDistance < player.AiLastGovernmentDistance;
+            player.AiStalledAttackTurns = expeditionPresent
+                ? progressed ? 0 : player.AiStalledAttackTurns + 1
+                : 0;
+            player.AiLastEnemyCombatPower = enemyPower;
+            player.AiLastOccupiedEnemyDistricts = occupiedDistricts;
+            player.AiLastGovernmentDistance = closestGovernmentDistance;
+            if (player.AiStalledAttackTurns >= 10 || EnemyHasNuclearProgram(state, player.Id))
+                player.AiNuclearPivot = true;
         }
 
         private static int PlannedImmediateGold(GameState state, List<GameCommand> commands,
@@ -959,14 +1177,38 @@ namespace LittleCiv.Core
             return default;
         }
 
-        private static EntityId SelectDefensiveTarget(GameState state, CityState city, UnitState unit)
+        private static EntityId SelectDefensiveTarget(GameState state, PlayerState player,
+            CityState city, UnitState unit, ISet<EntityId> claimedTargets)
         {
             var hostile = state.Units.FindAll(item => item.OwnerId != city.OwnerId &&
-                state.Players.Exists(player => player.Id == item.OwnerId &&
-                    player.Slot != PlayerSlot.Neutral));
+                state.Players.Exists(owner => owner.Id == item.OwnerId &&
+                    owner.Slot != PlayerSlot.Neutral));
             if (hostile.Count == 0) return default;
             var districts = state.Districts.FindAll(item => item.CityId == city.Id &&
-                item.ControllerId == city.OwnerId && item.RemainingConstructionTurns <= 0);
+                item.ControllerId == city.OwnerId && item.RemainingConstructionTurns <= 0 &&
+                item.Type != DistrictType.Government);
+            if (player.AiStrategy == PlayerAiStrategy.Science)
+            {
+                districts.Sort((left, right) =>
+                {
+                    var priority = ScienceDefensePriority(left.Type)
+                        .CompareTo(ScienceDefensePriority(right.Type));
+                    if (priority != 0) return priority;
+                    var distance = ClosestHostileDistance(state, left.TileId, hostile)
+                        .CompareTo(ClosestHostileDistance(state, right.TileId, hostile));
+                    return distance != 0 ? distance : left.Id.CompareTo(right.Id);
+                });
+                for (var index = 0; index < districts.Count; index++)
+                {
+                    if (claimedTargets != null && claimedTargets.Contains(districts[index].TileId)) continue;
+                    var alreadyGuarded = state.Units.Exists(item => item.OwnerId == player.Id &&
+                        item.TileId == districts[index].TileId && item.HitPoints > 0 &&
+                        !UnitRules.IsSupply(item.Type) && item.Id != unit.Id);
+                    if (alreadyGuarded) continue;
+                    claimedTargets?.Add(districts[index].TileId);
+                    return districts[index].TileId;
+                }
+            }
             EntityId best = default;
             var bestDistance = int.MaxValue;
             for (var districtIndex = 0; districtIndex < districts.Count; districtIndex++)
@@ -981,30 +1223,312 @@ namespace LittleCiv.Core
                     best = districts[districtIndex].TileId;
                 }
             }
+            claimedTargets?.Add(best);
             return best;
         }
 
-        private static EntityId SupplyEscortTarget(GameState state, EntityId playerId,
-            EntityId homeCityId, List<UnitState> units)
+        private static EntityId SelectCultureLockdownTarget(GameState state, PlayerState player,
+            CityState city, UnitState unit, ISet<EntityId> claimedTargets)
+        {
+            var candidates = state.Districts.FindAll(item => item.CityId == city.Id &&
+                item.ControllerId == city.OwnerId && item.RemainingConstructionTurns <= 0 &&
+                !item.IsPillaged && item.Type == DistrictType.Culture);
+            candidates.Sort((left, right) =>
+            {
+                var occupied = HasFriendlyCombatGuard(state, player.Id, left.TileId, unit.Id)
+                    .CompareTo(HasFriendlyCombatGuard(state, player.Id, right.TileId, unit.Id));
+                if (occupied != 0) return occupied;
+                var distance = CoordinateDistance(state, unit.TileId, left.TileId)
+                    .CompareTo(CoordinateDistance(state, unit.TileId, right.TileId));
+                return distance != 0 ? distance : left.Id.CompareTo(right.Id);
+            });
+            for (var index = 0; index < candidates.Count; index++)
+            {
+                if (claimedTargets != null && claimedTargets.Contains(candidates[index].TileId)) continue;
+                if (HasFriendlyCombatGuard(state, player.Id, candidates[index].TileId, unit.Id)) continue;
+                claimedTargets?.Add(candidates[index].TileId);
+                return candidates[index].TileId;
+            }
+            return GovernmentTile(state, city.Id);
+        }
+
+        private static EntityId SelectCultureRelayThreatTarget(GameState state,
+            PlayerState player, CityState homeCity)
         {
             UnitState selected = null;
-            var bestDistance = -1;
-            for (var index = 0; index < units.Count; index++)
+            var selectedPriority = int.MaxValue;
+            var selectedDistance = int.MaxValue;
+            for (var index = 0; index < state.Units.Count; index++)
             {
-                var candidate = units[index];
-                if (UnitRules.IsSupply(candidate.Type)) continue;
-                var tile = state.Tiles.Find(item => item.Id == candidate.TileId);
-                if (tile == null || tile.CityId == homeCityId) continue;
-                var distance = CoordinateDistance(state, candidate.TileId,
-                    state.Districts.Find(item => item.CityId == homeCityId &&
-                        item.Type == DistrictType.Government)?.TileId ?? default);
-                if (distance > bestDistance)
+                var hostile = state.Units[index];
+                if (hostile.OwnerId == player.Id || hostile.HitPoints <= 0 ||
+                    UnitRules.IsSupply(hostile.Type)) continue;
+                var owner = state.Players.Find(item => item.Id == hostile.OwnerId);
+                var tile = state.Tiles.Find(item => item.Id == hostile.TileId);
+                var relay = tile == null ? null : state.Cities.Find(item => item.Id == tile.CityId);
+                if (owner == null || owner.Slot == PlayerSlot.Neutral || relay == null ||
+                    relay.CultureSubjectToId != player.Id || relay.OccupyingPlayerId.IsValid) continue;
+                var district = state.Districts.Find(item => item.TileId == hostile.TileId);
+                var priority = district != null && district.Type == DistrictType.Government ? 0 :
+                    district != null && district.Type == DistrictType.Culture ? 1 : 2;
+                var distance = CoordinateDistance(state, GovernmentTile(state, homeCity.Id),
+                    hostile.TileId);
+                if (priority < selectedPriority || priority == selectedPriority &&
+                    (distance < selectedDistance || distance == selectedDistance &&
+                     (selected == null || hostile.TileId.CompareTo(selected.TileId) < 0)))
                 {
-                    bestDistance = distance;
-                    selected = candidate;
+                    selected = hostile;
+                    selectedPriority = priority;
+                    selectedDistance = distance;
                 }
             }
             return selected == null ? default : selected.TileId;
+        }
+
+        private static HashSet<EntityId> SelectRelayDefenseUnits(GameState state,
+            EntityId playerId, UnitState retained, EntityId threatTileId)
+        {
+            var result = new HashSet<EntityId>();
+            var candidates = state.Units.FindAll(item => item.OwnerId == playerId &&
+                item.HitPoints > 0 && !UnitRules.IsSupply(item.Type) &&
+                (retained == null || item.Id != retained.Id));
+            candidates.Sort((left, right) =>
+            {
+                var power = UnitRules.Attack(right.Type).CompareTo(UnitRules.Attack(left.Type));
+                if (power != 0) return power;
+                var distance = CoordinateDistance(state, left.TileId, threatTileId)
+                    .CompareTo(CoordinateDistance(state, right.TileId, threatTileId));
+                return distance != 0 ? distance : left.Id.CompareTo(right.Id);
+            });
+            var hostilePower = 0;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var hostile = state.Units[index];
+                if (hostile.TileId != threatTileId || hostile.OwnerId == playerId ||
+                    hostile.HitPoints <= 0 || UnitRules.IsSupply(hostile.Type) ||
+                    !UnitDiplomacyRules.AreHostile(state, playerId, hostile.OwnerId, threatTileId))
+                    continue;
+                hostilePower += UnitRules.Attack(hostile.Type) * hostile.HitPoints /
+                                Math.Max(1, UnitRules.MaximumHitPoints(hostile.Type));
+            }
+            var selectedPowerTwice = 0;
+            for (var index = 0; index < candidates.Count &&
+                 (result.Count < 1 || selectedPowerTwice < Math.Max(1, hostilePower) * 3); index++)
+            {
+                result.Add(candidates[index].Id);
+                selectedPowerTwice += 2 * UnitRules.Attack(candidates[index].Type) *
+                                      candidates[index].HitPoints /
+                                      Math.Max(1, UnitRules.MaximumHitPoints(candidates[index].Type));
+            }
+            return result;
+        }
+
+        private static bool HasFriendlyCombatGuard(GameState state, EntityId playerId,
+            EntityId tileId, EntityId excludedUnitId)
+        {
+            return state.Units.Exists(item => item.OwnerId == playerId && item.Id != excludedUnitId &&
+                item.TileId == tileId && item.HitPoints > 0 && !UnitRules.IsSupply(item.Type));
+        }
+
+        private static EntityId ScienceInterceptionTarget(GameState state, PlayerState player,
+            CityState city, PlayerAiAssessment assessment)
+        {
+            if (assessment == null || assessment.EnemyTurnsToTerritory > 3 ||
+                assessment.ThreatLevel < PlayerAiThreatLevel.Potential) return default;
+            var ownTier = UnitRules.EquipmentTier(StrongestCombat(player));
+            var government = GovernmentTile(state, city.Id);
+            UnitState selected = null;
+            var bestDistance = int.MaxValue;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var enemy = state.Units[index];
+                if (enemy.OwnerId == player.Id || enemy.HitPoints <= 0 || UnitRules.IsSupply(enemy.Type) ||
+                    UnitRules.EquipmentTier(enemy.Type) >= ownTier) continue;
+                var enemyOwner = state.Players.Find(item => item.Id == enemy.OwnerId);
+                if (enemyOwner == null || enemyOwner.Slot == PlayerSlot.Neutral) continue;
+                var tile = state.Tiles.Find(item => item.Id == enemy.TileId);
+                if (tile == null || tile.CityId == enemy.HomeCityId) continue;
+                var distance = CoordinateDistance(state, government, enemy.TileId);
+                if (distance < bestDistance || distance == bestDistance &&
+                    (selected == null || enemy.TileId.CompareTo(selected.TileId) < 0))
+                {
+                    bestDistance = distance;
+                    selected = enemy;
+                }
+            }
+            return selected == null ? default : selected.TileId;
+        }
+
+        private static bool ScienceCultureCounterRaidAllowed(GameState state, PlayerState player,
+            CityState city, CityState enemyCity)
+        {
+            if (player.AiStrategy != PlayerAiStrategy.Science || enemyCity == null ||
+                enemyCity.LastCultureProduction <= city.LastCultureProduction) return false;
+            var lossTurns = EstimatedCultureLossTurns(state, player.Id);
+            // Culture pressure is cumulative. Waiting until defeat is within 30 turns gives a
+            // culture specialist too much uncontested time, so science reacts as soon as its
+            // projected loss clock starts while retaining the normal raid safety checks.
+            return lossTurns >= 0;
+        }
+
+        private static int ScienceDefensePriority(DistrictType type)
+        {
+            if (type == DistrictType.NuclearFacility) return 0;
+            if (type == DistrictType.Science) return 1;
+            if (type == DistrictType.Culture) return 2;
+            if (type == DistrictType.Military) return 3;
+            if (type == DistrictType.Commerce) return 4;
+            return 5;
+        }
+
+        private static int ClosestHostileDistance(GameState state, EntityId tileId,
+            List<UnitState> hostile)
+        {
+            var best = int.MaxValue;
+            for (var index = 0; index < hostile.Count; index++)
+                best = Math.Min(best, CoordinateDistance(state, tileId, hostile[index].TileId));
+            return best;
+        }
+
+        private static EntityId SupplyEscortTarget(GameState state, UnitState supply,
+            EntityId homeCityId, List<UnitState> units, ISet<EntityId> expedition,
+            EntityId operationTarget, ISet<EntityId> assignedCombat)
+        {
+            UnitState selected = null;
+            for (var index = 0; index < units.Count; index++)
+            {
+                var candidate = units[index];
+                if (UnitRules.IsSupply(candidate.Type) || expedition == null ||
+                    !expedition.Contains(candidate.Id) || assignedCombat != null &&
+                    assignedCombat.Contains(candidate.Id)) continue;
+                if (selected == null || CompareSupplyNeed(state, candidate, selected, operationTarget) < 0)
+                    selected = candidate;
+            }
+            if (selected == null) return default;
+            assignedCombat?.Add(selected.Id);
+            if (selected.TileId != supply.TileId) return selected.TileId;
+            if (!operationTarget.IsValid) return default;
+            var targetTile = state.Tiles.Find(item => item.Id == operationTarget);
+            var targetCity = targetTile == null ? default : targetTile.CityId;
+            var path = TacticalPathfinder.FindPath(state, supply, operationTarget,
+                new HashSet<EntityId> { homeCityId, targetCity });
+            if (path.Count <= 1) return default;
+            var advance = Math.Min(path.Count - 2,
+                Math.Max(0, UnitRules.Movement(selected.Type) - 1));
+            return path[advance];
+        }
+
+        private static int CompareSupplyNeed(GameState state, UnitState left, UnitState right,
+            EntityId operationTarget)
+        {
+            var leftRatio = left.CarriedFood * 100 / Math.Max(1, UnitRules.FoodCapacity(state, left));
+            var rightRatio = right.CarriedFood * 100 / Math.Max(1, UnitRules.FoodCapacity(state, right));
+            var comparison = leftRatio.CompareTo(rightRatio);
+            if (comparison != 0) return comparison;
+            comparison = CoordinateDistance(state, left.TileId, operationTarget)
+                .CompareTo(CoordinateDistance(state, right.TileId, operationTarget));
+            return comparison != 0 ? comparison : left.Id.CompareTo(right.Id);
+        }
+
+        private static bool HasLocalAgricultureSupply(GameState state, EntityId playerId,
+            EntityId tileId)
+        {
+            return state.Districts.Exists(item => item.TileId == tileId &&
+                item.Type == DistrictType.Agriculture && item.ControllerId == playerId &&
+                item.IsOperational && !item.IsPillaged && item.RemainingConstructionTurns <= 0);
+        }
+
+        private static bool HasReachableSupplyUnit(GameState state, UnitState combat, int requiredFood)
+        {
+            if (UnitRules.IsSupply(combat.Type) || requiredFood == int.MaxValue) return false;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var supply = state.Units[index];
+                if (supply.OwnerId != combat.OwnerId || supply.HitPoints <= 0 ||
+                    !UnitRules.IsSupply(supply.Type) || supply.CarriedFood <= 0) continue;
+                if (CoordinateDistance(state, supply.TileId, combat.TileId) <=
+                    UnitRules.Movement(supply.Type) &&
+                    supply.CarriedFood + combat.CarriedFood >= requiredFood) return true;
+            }
+            return false;
+        }
+
+        private static HashSet<EntityId> SelectOccupationHoldUnits(GameState state,
+            PlayerState player, CityState homeCity, CityState enemyCity, DistrictState government,
+            bool economyFailed)
+        {
+            var result = new HashSet<EntityId>();
+            if (player.AiStrategy != PlayerAiStrategy.Conquest || enemyCity == null ||
+                government == null || economyFailed || player.AiNuclearPivot) return result;
+            var homeGuarded = state.Units.Exists(item => item.OwnerId == player.Id &&
+                item.TileId == government.TileId && item.HitPoints > 0 &&
+                !UnitRules.IsSupply(item.Type));
+            if (!homeGuarded) return result;
+
+            var occupied = state.Districts.FindAll(item => item.CityId == enemyCity.Id &&
+                item.Type != DistrictType.Government && item.ControllerId == player.Id);
+            occupied.Sort((left, right) =>
+            {
+                var priority = OccupationPriority(left.Type).CompareTo(OccupationPriority(right.Type));
+                return priority != 0 ? priority : left.Id.CompareTo(right.Id);
+            });
+            for (var index = 0; index < occupied.Count; index++)
+            {
+                var district = occupied[index];
+                var occupier = state.Units.Find(item => item.OwnerId == player.Id &&
+                    item.TileId == district.TileId && item.HitPoints > 0 &&
+                    !UnitRules.IsSupply(item.Type));
+                if (occupier == null || !HasOccupationSupply(state, occupier, district, government) ||
+                    !HasFollowOnCombat(state, player.Id, occupier, government.TileId)) continue;
+                result.Add(occupier.Id);
+            }
+            return result;
+        }
+
+        private static bool HasOccupationSupply(GameState state, UnitState occupier,
+            DistrictState district, DistrictState government)
+        {
+            if (district.Type == DistrictType.Agriculture) return true;
+            var distanceHome = CoordinateDistance(state, occupier.TileId, government.TileId);
+            if (distanceHome == int.MaxValue) return false;
+            var turnsHome = (distanceHome + UnitRules.Movement(occupier.Type) - 1) /
+                            UnitRules.Movement(occupier.Type);
+            if (occupier.CarriedFood >= turnsHome + 2) return true;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var supply = state.Units[index];
+                if (supply.OwnerId != occupier.OwnerId || supply.HitPoints <= 0 ||
+                    !UnitRules.IsSupply(supply.Type) || supply.CarriedFood <= 0) continue;
+                if (CoordinateDistance(state, supply.TileId, occupier.TileId) <=
+                    UnitRules.Movement(supply.Type) * 2) return true;
+            }
+            return false;
+        }
+
+        private static bool HasFollowOnCombat(GameState state, EntityId playerId,
+            UnitState occupier, EntityId governmentTileId)
+        {
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var reinforcement = state.Units[index];
+                if (reinforcement.Id == occupier.Id || reinforcement.OwnerId != playerId ||
+                    reinforcement.HitPoints <= 0 || UnitRules.IsSupply(reinforcement.Type) ||
+                    reinforcement.TileId == governmentTileId) continue;
+                if (CoordinateDistance(state, reinforcement.TileId, occupier.TileId) <=
+                    UnitRules.Movement(reinforcement.Type) * 2) return true;
+            }
+            return false;
+        }
+
+        private static int OccupationPriority(DistrictType type)
+        {
+            if (type == DistrictType.NuclearFacility) return 0;
+            if (type == DistrictType.Military) return 1;
+            if (type == DistrictType.Agriculture) return 2;
+            if (type == DistrictType.Science) return 3;
+            if (type == DistrictType.Commerce) return 4;
+            if (type == DistrictType.Culture) return 5;
+            return 6;
         }
 
         private static HashSet<EntityId> SelectExpeditionUnits(GameState state, EntityId playerId,
@@ -1033,11 +1557,11 @@ namespace LittleCiv.Core
 
         private static EntityId SelectLimitedRaidTarget(GameState state, PlayerState player,
             CityState city, CityState enemyCity, PlayerAiAssessment assessment, UnitState retained,
-            bool prioritizeCultureRaid)
+            bool prioritizeCultureRaid, bool allowSingleUnitRaid = false)
         {
             if (assessment.ThreatLevel >= PlayerAiThreatLevel.Emergency ||
                 !NeutralEconomyPlanner.Evaluate(state, city).IsSafe ||
-                CountCombat(state, player.Id) < 3) return default;
+                CountCombat(state, player.Id) < (allowSingleUnitRaid ? 2 : 3)) return default;
             var priorities = prioritizeCultureRaid
                 ? new[] { DistrictType.Culture, DistrictType.NuclearFacility, DistrictType.Military,
                     DistrictType.Agriculture, DistrictType.Science, DistrictType.Commerce }
@@ -1053,14 +1577,15 @@ namespace LittleCiv.Core
                     state, player.Id, retained == null ? default : retained.Id, left, right));
                 for (var index = 0; index < candidates.Count; index++)
                     if (CanSupplyLimitedRaid(state, player, city, enemyCity, retained,
-                            candidates[index].TileId))
+                            candidates[index].TileId, allowSingleUnitRaid))
                         return candidates[index].TileId;
             }
             return default;
         }
 
         private static bool CanSupplyLimitedRaid(GameState state, PlayerState player,
-            CityState city, CityState enemyCity, UnitState retained, EntityId targetTileId)
+            CityState city, CityState enemyCity, UnitState retained, EntityId targetTileId,
+            bool allowSingleUnitRaid)
         {
             var source = state.Districts.Find(item => item.CityId == city.Id &&
                 item.Type == DistrictType.Government);
@@ -1069,14 +1594,15 @@ namespace LittleCiv.Core
             var distance = FindMajorWarPath(state, probe, targetTileId, city.Id, enemyCity.Id).Count;
             if (distance <= 0) return false;
             var units = RaidCandidates(state, player.Id, retained);
-            if (units.Count < 2) return false;
+            var minimumUnits = allowSingleUnitRaid ? 1 : 2;
+            if (units.Count < minimumUnits) return false;
             var requiredPowerTimesFour = Math.Max(1, TileCombatPower(state, enemyCity.OwnerId,
                 targetTileId)) * 5;
             var selectedPowerTimesFour = 0;
             var selected = 0;
             var foodNeeded = 0;
             for (var index = 0; index < units.Count &&
-                 (selected < 2 || selectedPowerTimesFour < requiredPowerTimesFour); index++)
+                 (selected < minimumUnits || selectedPowerTimesFour < requiredPowerTimesFour); index++)
             {
                 var travelTurns = (distance + UnitRules.Movement(units[index].Type) - 1) /
                                   UnitRules.Movement(units[index].Type);
@@ -1087,12 +1613,12 @@ namespace LittleCiv.Core
                 selected++;
             }
             var economy = NeutralEconomyPlanner.Evaluate(state, city);
-            return selected >= 2 && selectedPowerTimesFour >= requiredPowerTimesFour &&
+            return selected >= minimumUnits && selectedPowerTimesFour >= requiredPowerTimesFour &&
                    city.StoredFood - economy.FoodReserveRequired >= foodNeeded;
         }
 
         private static HashSet<EntityId> SelectLimitedRaidUnits(GameState state, EntityId playerId,
-            UnitState retained, EntityId targetTileId)
+            UnitState retained, EntityId targetTileId, bool allowSingleUnitRaid = false)
         {
             var result = new HashSet<EntityId>();
             var units = RaidCandidates(state, playerId, retained);
@@ -1101,14 +1627,27 @@ namespace LittleCiv.Core
             var requiredPowerTimesFour = Math.Max(1, TileCombatPower(state,
                 targetCity == null ? default : targetCity.OwnerId, targetTileId)) * 5;
             var selectedPowerTimesFour = 0;
+            var minimumUnits = allowSingleUnitRaid ? 1 : 2;
             for (var index = 0; index < units.Count &&
-                 (result.Count < 2 || selectedPowerTimesFour < requiredPowerTimesFour); index++)
+                 (result.Count < minimumUnits || selectedPowerTimesFour < requiredPowerTimesFour); index++)
             {
                 result.Add(units[index].Id);
                 selectedPowerTimesFour += 4 * UnitRules.Attack(units[index].Type) *
                     units[index].HitPoints / Math.Max(1, UnitRules.MaximumHitPoints(units[index].Type));
             }
             return result;
+        }
+
+        private static bool IsLowEnemyMilitaryOpportunity(GameState state, PlayerState player,
+            PlayerAiAssessment assessment)
+        {
+            if (player.AiStrategy != PlayerAiStrategy.Conquest || assessment == null ||
+                player.AiNuclearPivot || player.AiLowEnemyMilitaryTurns <= 0) return false;
+            var enemy = state.Players.Find(item => item.Slot != PlayerSlot.Neutral &&
+                item.Id != player.Id);
+            return enemy != null && CountCombat(state, player.Id) >= 2 &&
+                   CountCombat(state, enemy.Id) <= 1 &&
+                   assessment.OwnCombatPower >= assessment.EnemyCombatPower * 2;
         }
 
         private static List<UnitState> RaidCandidates(GameState state, EntityId playerId,
@@ -1144,7 +1683,8 @@ namespace LittleCiv.Core
             var tile = state.Tiles.Find(item => item.Id == unit.TileId);
             if (tile == null || tile.CityId != city.Id || tile.ControllerId != player.Id) return;
             var capacity = UnitRules.FoodCapacity(state, unit);
-            var desired = Math.Min(capacity, Math.Max(pathLength + 2, capacity / 2));
+            var desired = UnitRules.IsSupply(unit.Type) ? capacity :
+                Math.Min(capacity, Math.Max(pathLength + 2, capacity / 2));
             var incoming = 0;
             for (var index = 0; index < result.Count; index++)
                 if (result[index].Type == GameCommandType.TransferFood &&
@@ -1192,6 +1732,7 @@ namespace LittleCiv.Core
             var requiredPower = AssaultDefensePower(state, player.Id, enemyCity.Id) * 3;
             var selectedPowerTwice = 0;
             var needed = 0;
+            var needsMobileSupply = false;
             for (var index = 0; index < units.Count && selectedPowerTwice < requiredPower; index++)
             {
                 if (retained != null && units[index].Id == retained.Id) continue;
@@ -1199,9 +1740,13 @@ namespace LittleCiv.Core
                                   UnitRules.Movement(units[index].Type);
                 var desired = Math.Min(UnitRules.FoodCapacity(state, units[index]), travelTurns + 2);
                 needed += Math.Max(0, desired - units[index].CarriedFood);
+                if (travelTurns + 2 >= UnitRules.FoodCapacity(state, units[index]))
+                    needsMobileSupply = true;
                 selectedPowerTwice += 2 * UnitRules.Attack(units[index].Type) * units[index].HitPoints /
                                       Math.Max(1, UnitRules.MaximumHitPoints(units[index].Type));
             }
+            if (needsMobileSupply && !state.Units.Exists(item => item.OwnerId == player.Id &&
+                    item.HitPoints > 0 && UnitRules.IsSupply(item.Type))) return false;
             return selectedPowerTwice >= requiredPower &&
                    city.StoredFood - economy.FoodReserveRequired >= needed;
         }
@@ -1266,7 +1811,8 @@ namespace LittleCiv.Core
 
         private static bool HasEnemyAt(GameState state, EntityId ownerId, EntityId tileId) =>
             state.Units.Exists(item => item.TileId == tileId && item.OwnerId != ownerId &&
-                item.HitPoints > 0);
+                item.HitPoints > 0 &&
+                UnitDiplomacyRules.AreHostile(state, ownerId, item.OwnerId, tileId));
 
         private static int CoordinateDistance(GameState state, EntityId left, EntityId right)
         {
@@ -1327,52 +1873,12 @@ namespace LittleCiv.Core
         }
 
         private static List<EntityId> FindMajorWarPath(GameState state, UnitState unit,
-            EntityId target, EntityId homeCityId, EntityId enemyCityId)
+            EntityId target, EntityId homeCityId, EntityId enemyCityId,
+            IReadOnlyDictionary<EntityId, int> reservedTraffic = null, int formationIndex = 0)
         {
-            var byCoordinate = new Dictionary<HexCoord, TileState>();
-            for (var index = 0; index < state.Tiles.Count; index++)
-            {
-                var coordinate = MapTraversal.GlobalCoordinate(state, state.Tiles[index].Id);
-                if (coordinate.HasValue) byCoordinate[coordinate.Value] = state.Tiles[index];
-            }
-            var queue = new Queue<EntityId>();
-            var previous = new Dictionary<EntityId, EntityId>();
-            queue.Enqueue(unit.TileId);
-            previous[unit.TileId] = default;
-            while (queue.Count > 0)
-            {
-                var current = queue.Dequeue();
-                if (current == target) break;
-                var coordinate = MapTraversal.GlobalCoordinate(state, current);
-                if (!coordinate.HasValue) continue;
-                var directionOffset = (int)(Math.Abs(unit.Id.Value) % 6);
-                for (var step = 0; step < 6; step++)
-                {
-                    var direction = (directionOffset + step) % 6;
-                    if (!byCoordinate.TryGetValue(coordinate.Value + HexCoord.Direction(direction),
-                            out var tile) || previous.ContainsKey(tile.Id)) continue;
-                    if (tile.CityId != homeCityId && tile.CityId != enemyCityId) continue;
-                    if (tile.Id != target && !HasBranchCapacity(state, unit, tile.Id)) continue;
-                    var blocked = state.Units.Exists(item => item.TileId == tile.Id &&
-                        item.OwnerId != unit.OwnerId && item.HitPoints > 0);
-                    if (blocked && tile.Id != target) continue;
-                    previous[tile.Id] = current;
-                    queue.Enqueue(tile.Id);
-                }
-            }
-            if (!previous.ContainsKey(target)) return new List<EntityId>();
-            var path = new List<EntityId>();
-            for (var cursor = target; cursor != unit.TileId; cursor = previous[cursor]) path.Add(cursor);
-            path.Reverse();
-            return path;
-        }
-
-        private static bool HasBranchCapacity(GameState state, UnitState moving, EntityId tileId)
-        {
-            var supply = UnitRules.IsSupply(moving.Type);
-            var count = state.Units.FindAll(item => item.Id != moving.Id && item.TileId == tileId &&
-                UnitRules.IsSupply(item.Type) == supply && item.HitPoints > 0).Count;
-            return count < (supply ? UnitRules.SupplyUnitsPerTile : UnitRules.CombatUnitsPerTile);
+            var allowedCities = new HashSet<EntityId> { homeCityId, enemyCityId };
+            return TacticalPathfinder.FindPath(state, unit, target, allowedCities,
+                reservedTraffic, formationIndex);
         }
 
         private static int CombatPower(GameState state, EntityId ownerId)

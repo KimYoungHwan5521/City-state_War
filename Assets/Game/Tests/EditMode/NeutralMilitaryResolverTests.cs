@@ -307,6 +307,82 @@ namespace LittleCiv.Tests
             }
         }
 
+        [Test]
+        public void MilitaryNeutralSupplyTransfersFoodInsteadOfJoiningCombat()
+        {
+            var state = PrototypeMatchFactory.Create(13310);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            MakeEconomicallySafe(city);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var combat = state.Units.Single(item => item.HomeCityId == city.Id);
+            combat.CarriedFood = 0;
+            combat.CreatedTurn = state.TurnNumber - 1;
+            combat.RemainingMovement = UnitRules.Movement(combat.Type);
+            var supply = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = government.TileId, Type = UnitType.Supply,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Supply), CarriedFood = 20,
+                RemainingMovement = UnitRules.Movement(UnitType.Supply),
+                CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(supply);
+
+            var result = NeutralMilitaryResolver.IssueOrders(state);
+
+            Assert.That(result.FoodTransfers.Any(item => item.SupplierId == supply.Id &&
+                item.ReceiverId == combat.Id && item.Amount == 6), Is.True);
+            Assert.That(combat.CarriedFood, Is.EqualTo(6));
+            Assert.That(supply.CarriedFood, Is.EqualTo(14));
+            Assert.That(result.Movements.Any(item => item.SubjectId == supply.Id &&
+                item.SecondaryValue != 0), Is.False, "보급대는 공격 명령을 만들면 안 된다.");
+        }
+
+        [Test]
+        public void MilitaryNeutralSupplyFollowsNeediestFriendlyCombatUnitAndAvoidsHostileTile()
+        {
+            var state = PrototypeMatchFactory.Create(13311);
+            var city = NeutralCity(state, NeutralCitySpecialization.Military);
+            MakeEconomicallySafe(city);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var needyTile = state.MapTopology.FindView(city.Id).Tiles.First(item =>
+                item.IsBuildable && item.TileId != government.TileId);
+            var combat = state.Units.Single(item => item.HomeCityId == city.Id);
+            combat.TileId = needyTile.TileId;
+            combat.CarriedFood = 1;
+            combat.CreatedTurn = state.TurnNumber - 1;
+            var supply = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = government.TileId, Type = UnitType.Supply,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Supply), CarriedFood = 20,
+                RemainingMovement = UnitRules.Movement(UnitType.Supply),
+                CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(supply);
+            var hostileOwner = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            NeutralCityRules.SetFavor(city, hostileOwner.Id, -10);
+            var hostileTile = state.MapTopology.FindView(city.Id).Tiles.First(item =>
+                item.IsBuildable && item.TileId != needyTile.TileId &&
+                item.TileId != government.TileId);
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = hostileOwner.Id,
+                HomeCityId = state.Cities.Single(item => item.OwnerId == hostileOwner.Id).Id,
+                TileId = hostileTile.TileId, Type = UnitType.Militia,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia)
+            });
+
+            var result = NeutralMilitaryResolver.IssueOrders(state);
+            var movement = result.Movements.Single(item => item.SubjectId == supply.Id);
+
+            Assert.That(movement.TargetId, Is.EqualTo(needyTile.TileId));
+            Assert.That(movement.TargetId, Is.Not.EqualTo(hostileTile.TileId));
+            Assert.That(movement.SecondaryValue, Is.Zero);
+        }
+
         private static CityState NeutralCity(GameState state, NeutralCitySpecialization specialization) =>
             state.Cities.First(item => item.NeutralSpecialization == specialization);
 

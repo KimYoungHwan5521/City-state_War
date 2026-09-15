@@ -140,11 +140,36 @@ namespace LittleCiv.Tests
                 ResearchType.NuclearFission)), Is.True);
             foreach (var city in cities)
             {
+                Assert.That(city.NeutralCompletedResearch.Count,
+                    Is.EqualTo(NeutralResearchResolver.OrderFor(city.NeutralSpecialization).Count),
+                    city.Name + "은 전문화 연구 목록을 모두 끝내야 한다.");
                 var facilities = state.Districts.Where(item => item.CityId == city.Id &&
                     item.Type == DistrictType.NuclearFacility).ToArray();
                 Assert.That(facilities.Length, Is.EqualTo(1));
                 Assert.That(facilities[0].RemainingConstructionTurns, Is.Zero);
                 Assert.That(facilities[0].IsOperational, Is.True);
+                var defense = state.DefenseFacilities.Single(item => item.CityId == city.Id);
+                Assert.That(defense.Type, Is.EqualTo(DefenseFacilityType.ModernDefense),
+                    city.Name + "은 최종 방어시설을 완성해야 한다.");
+                Assert.That(defense.RemainingConstructionTurns, Is.Zero);
+                Assert.That(defense.IsModernDefenseActive, Is.True);
+                var target = NeutralMilitaryResolver.ForceTarget(state, city);
+                var combat = state.Units.Count(item => item.HomeCityId == city.Id &&
+                    item.HitPoints > 0 && !UnitRules.IsSupply(item.Type));
+                var supply = state.Units.Count(item => item.HomeCityId == city.Id &&
+                    item.HitPoints > 0 && UnitRules.IsSupply(item.Type));
+                Assert.That(combat, Is.GreaterThanOrEqualTo(target.Combat),
+                    city.Name + "은 후반 전투병 목표를 유지해야 한다.");
+                Assert.That(supply, Is.GreaterThanOrEqualTo(target.Supply),
+                    city.Name + "은 후반 보급병 목표를 유지해야 한다.");
+                Assert.That(state.Units.Where(item => item.HomeCityId == city.Id &&
+                    item.HitPoints > 0 && !UnitRules.IsSupply(item.Type))
+                    .All(item => item.Type == UnitType.MechanizedInfantry), Is.True,
+                    city.Name + "의 전투병은 최상위 병종으로 승급되어야 한다.");
+                Assert.That(NeutralEconomyPlanner.Evaluate(state, city).IsSafe, Is.True,
+                    city.Name + "은 최종 목표 후에도 2턴 경제 안전선을 지켜야 한다.");
+                Assert.That(city.ResearchPoints, Is.GreaterThan(0),
+                    city.Name + "은 연구 완료 뒤 과학을 장기전용으로 비축해야 한다.");
             }
             Assert.That(state.NuclearProjects, Is.Empty);
         }
@@ -497,7 +522,7 @@ namespace LittleCiv.Tests
 
         [TestCase(PlayerAiStrategy.Science, VictoryType.Science, 80)]
         [TestCase(PlayerAiStrategy.Culture, VictoryType.Culture, 40)]
-        [TestCase(PlayerAiStrategy.Conquest, VictoryType.Conquest, 50)]
+        [TestCase(PlayerAiStrategy.Conquest, VictoryType.Conquest, 170)]
         public void EasyAiCanFinishAnUnopposedMatchWithoutTargetingNeutralCities(
             PlayerAiStrategy strategy, VictoryType expectedVictory, int turnLimit)
         {
@@ -520,8 +545,616 @@ namespace LittleCiv.Tests
                 }
             }
 
-            Assert.That(state.Victory, Is.EqualTo(expectedVictory));
+            if (strategy == PlayerAiStrategy.Conquest)
+                Assert.That(state.Victory, Is.EqualTo(expectedVictory).Or.EqualTo(VictoryType.Science),
+                    "정복형은 장기 교착 시 핵개발 대체 승리로 전환할 수 있다.");
+            else if (strategy == PlayerAiStrategy.Science)
+                Assert.That(state.Victory, Is.EqualTo(expectedVictory).Or.EqualTo(VictoryType.Conquest),
+                    "과학형은 1.5배 공세 조건이 먼저 성립하면 정복으로 경기를 끝낼 수 있다.");
+            else
+                Assert.That(state.Victory, Is.EqualTo(expectedVictory));
             Assert.That(state.WinnerId, Is.EqualTo(ai.Id));
+        }
+
+        [Test]
+        public void ScienceAiWithEquipmentLeadInterceptsApproachingLowerTierUnit()
+        {
+            var state = PrototypeMatchFactory.Create(14503);
+            var science = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            science.AiStrategy = PlayerAiStrategy.Science;
+            enemy.AiStrategy = PlayerAiStrategy.Conquest;
+            science.UnlockedUnitTypes.Add(UnitType.IronInfantry);
+            var scienceCity = state.Cities.Single(item => item.OwnerId == science.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            scienceCity.Gold = 100;
+            scienceCity.StoredFood = 100;
+            scienceCity.TestGovernmentFoodBonus = 20;
+            scienceCity.TestGovernmentGoldBonus = 20;
+            var scienceGovernment = state.Districts.Single(item => item.CityId == scienceCity.Id &&
+                item.Type == DistrictType.Government);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = science.Id, HomeCityId = scienceCity.Id,
+                TileId = scienceGovernment.TileId, Type = UnitType.IronInfantry,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.IronInfantry), CarriedFood = 6,
+                RemainingMovement = UnitRules.Movement(UnitType.IronInfantry)
+            });
+            var approaching = state.Units.Single(item => item.HomeCityId == enemyCity.Id);
+            approaching.TileId = state.Tiles.Where(item => item.CityId != scienceCity.Id &&
+                    item.CityId != enemyCity.Id)
+                .OrderBy(item => HexCoord.Distance(
+                    MapTraversal.GlobalCoordinate(state, scienceGovernment.TileId).Value,
+                    MapTraversal.GlobalCoordinate(state, item.Id).Value)).First().Id;
+            approaching.CreatedTurn = state.TurnNumber - 1;
+            approaching.RemainingMovement = UnitRules.Movement(approaching.Type);
+            for (var index = 0; index < 2; index++)
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = enemy.Id, HomeCityId = enemyCity.Id,
+                    TileId = enemyGovernment.TileId, Type = UnitType.Militia,
+                    HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia), CarriedFood = 6
+                });
+
+            var moves = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == science.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(moves.Any(item => item.TargetId == approaching.TileId), Is.True);
+        }
+
+        [Test]
+        public void ScienceAiCounterRaidsWhenCulturePressureStartsBeforeThirtyTurnThreshold()
+        {
+            var state = PrototypeMatchFactory.Create(14513);
+            var science = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var culture = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            science.AiStrategy = PlayerAiStrategy.Science;
+            culture.AiStrategy = PlayerAiStrategy.Culture;
+            science.UnlockedUnitTypes.Add(UnitType.IronInfantry);
+            var scienceCity = state.Cities.Single(item => item.OwnerId == science.Id);
+            var cultureCity = state.Cities.Single(item => item.OwnerId == culture.Id);
+            scienceCity.Population = 6;
+            scienceCity.Gold = 200;
+            scienceCity.StoredFood = 200;
+            scienceCity.TestGovernmentFoodBonus = 50;
+            scienceCity.TestGovernmentGoldBonus = 50;
+            scienceCity.LastCultureProduction = 1;
+            cultureCity.LastCultureProduction = 2;
+            var scienceGovernment = state.Districts.Single(item => item.CityId == scienceCity.Id &&
+                item.Type == DistrictType.Government);
+            for (var index = 0; index < 3; index++)
+                AddAiUnit(state, science, scienceCity, scienceGovernment.TileId,
+                    UnitType.IronInfantry, 6);
+            var cultureGovernment = state.Districts.Single(item => item.CityId == cultureCity.Id &&
+                item.Type == DistrictType.Government);
+            AddAiUnit(state, culture, cultureCity, cultureGovernment.TileId,
+                UnitType.IronInfantry, 6);
+            var cultureTile = state.MapTopology.FindView(cultureCity.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = cultureCity.Id, TileId = cultureTile.TileId,
+                Type = DistrictType.Culture, ControllerId = culture.Id,
+                AssignedCitizens = 1, IsOperational = true
+            });
+
+            var moves = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == science.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(moves.Count(item => item.TargetId == cultureTile.TileId),
+                Is.GreaterThanOrEqualTo(3),
+                "문화패배가 30턴보다 멀고 적과 동급 장비여도 문화 생산 열세가 시작되면 과학형은 역약탈해야 한다.");
+        }
+
+        [Test]
+        public void CultureAiWithinTenTurnsOfVictoryDefendsCultureDistrictInsteadOfInvading()
+        {
+            var state = PrototypeMatchFactory.Create(14504);
+            var culture = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            culture.AiStrategy = PlayerAiStrategy.Culture;
+            var cultureCity = state.Cities.Single(item => item.OwnerId == culture.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            cultureCity.Gold = 200;
+            cultureCity.StoredFood = 200;
+            cultureCity.TestGovernmentFoodBonus = 50;
+            cultureCity.TestGovernmentGoldBonus = 50;
+            cultureCity.LastCultureProduction = 2;
+            enemyCity.LastCultureProduction = 1;
+            enemyCity.CultureInfluences.Add(new CultureInfluenceState
+            {
+                CultureOwnerId = culture.Id, PreferredCitizens = 2, ConversionProgress = 9
+            });
+            var ownGovernment = state.Districts.Single(item => item.CityId == cultureCity.Id &&
+                item.Type == DistrictType.Government);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            var cultureTile = state.MapTopology.FindView(cultureCity.Id).Tiles.First(item =>
+                item.TileId != ownGovernment.TileId &&
+                !state.Districts.Any(district => district.TileId == item.TileId));
+            var cultureDistrict = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = cultureCity.Id, TileId = cultureTile.TileId,
+                Type = DistrictType.Culture, ControllerId = culture.Id,
+                IsOperational = true, AssignedCitizens = 1
+            };
+            state.Districts.Add(cultureDistrict);
+            for (var index = 0; index < 3; index++)
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = culture.Id, HomeCityId = cultureCity.Id,
+                    TileId = ownGovernment.TileId, Type = UnitType.MechanizedInfantry,
+                    HitPoints = UnitRules.MaximumHitPoints(UnitType.MechanizedInfantry),
+                    CarriedFood = 10, RemainingMovement = UnitRules.Movement(UnitType.MechanizedInfantry)
+                });
+
+            var moves = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == culture.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(moves.Any(item => item.TargetId == enemyGovernment.TileId), Is.False);
+            Assert.That(moves.Any(item => item.TargetId == cultureDistrict.TileId), Is.True);
+        }
+
+        [Test]
+        public void ConquestAiCountsPersistentExpeditionWithoutProgressAsStalled()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14505, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            var expedition = state.Units.Single(item => item.HomeCityId == city.Id);
+            var expeditionTile = state.MapTopology.FindView(enemyCity.Id).Tiles.First(item =>
+                item.IsBuildable).TileId;
+            expedition.TileId = expeditionTile;
+            expedition.RemainingMovement = UnitRules.Movement(expedition.Type);
+            expedition.CreatedTurn = state.TurnNumber - 1;
+            var assessment = EasyPlayerAiPlanner.Assess(state, ai, city);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            ai.AiLastEnemyCombatPower = assessment.EnemyCombatPower;
+            ai.AiLastOccupiedEnemyDistricts = 0;
+            ai.AiLastGovernmentDistance = HexCoord.Distance(
+                MapTraversal.GlobalCoordinate(state, expeditionTile).Value,
+                MapTraversal.GlobalCoordinate(state, enemyGovernment.TileId).Value);
+            ai.AiStalledAttackTurns = 9;
+
+            EasyPlayerAiPlanner.PlanOrders(state);
+
+            Assert.That(ai.AiStalledAttackTurns, Is.EqualTo(10));
+            Assert.That(ai.AiNuclearPivot, Is.True);
+        }
+
+        [Test]
+        public void ConquestAiNuclearPivotSwitchesResearchWithoutDiscardingOldProgress()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14506, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            ai.CompletedResearch.Add(ResearchType.Vehicles);
+            ai.CurrentResearch = ResearchType.Arts;
+            ai.ResearchProgress.Add(new ResearchProgressState
+            {
+                Type = ResearchType.Arts, Progress = 17
+            });
+            ai.AiNuclearPivot = true;
+
+            var command = EasyPlayerAiPlanner.PlanResearch(state).Single(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.SelectResearch);
+
+            Assert.That(command.PrimaryValue, Is.EqualTo((int)ResearchType.NuclearFission));
+            Assert.That(ai.ResearchProgress.Single(item => item.Type == ResearchType.Arts).Progress,
+                Is.EqualTo(17));
+        }
+
+        [Test]
+        public void ConquestSupplyDepartsWithExpeditionWithoutTargetingEnemyGovernment()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14507, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            city.Gold = 200;
+            city.StoredFood = 200;
+            city.TestGovernmentFoodBonus = 50;
+            city.TestGovernmentGoldBonus = 50;
+            ai.UnlockedUnitTypes.Add(UnitType.MechanizedInfantry);
+            ai.UnlockedUnitTypes.Add(UnitType.MotorizedSupply);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            for (var index = 0; index < 3; index++)
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = ai.Id, HomeCityId = city.Id,
+                    TileId = government.TileId, Type = UnitType.MechanizedInfantry,
+                    HitPoints = UnitRules.MaximumHitPoints(UnitType.MechanizedInfantry),
+                    CarriedFood = UnitRules.FoodCapacity(UnitType.MechanizedInfantry),
+                    RemainingMovement = UnitRules.Movement(UnitType.MechanizedInfantry),
+                    CreatedTurn = state.TurnNumber - 1
+                });
+            var supply = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = ai.Id, HomeCityId = city.Id,
+                TileId = government.TileId, Type = UnitType.MotorizedSupply,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.MotorizedSupply),
+                CarriedFood = UnitRules.FoodCapacity(UnitType.MotorizedSupply),
+                RemainingMovement = UnitRules.Movement(UnitType.MotorizedSupply),
+                CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(supply);
+
+            var movements = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+            var supplyMove = movements.Single(item => item.SubjectId == supply.Id);
+
+            Assert.That(supplyMove.Path, Is.Not.Empty);
+            Assert.That(supplyMove.TargetId, Is.Not.EqualTo(enemyGovernment.TileId));
+            Assert.That(supplyMove.SecondaryValue, Is.Zero);
+            Assert.That(movements.Any(item => item.SubjectId != supply.Id &&
+                item.TargetId == enemyGovernment.TileId), Is.True);
+        }
+
+        [Test]
+        public void ConquestAiHoldsSupportedOccupiedDistrict()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14508, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 200;
+            home.StoredFood = 200;
+            home.TestGovernmentFoodBonus = 50;
+            home.TestGovernmentGoldBonus = 50;
+            var enemyTile = state.MapTopology.FindView(enemyCity.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            var occupied = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = enemyCity.Id, TileId = enemyTile.TileId,
+                Type = DistrictType.Agriculture, ControllerId = ai.Id,
+                IsPillaged = true, IsOperational = false, AssignedCitizens = 1
+            };
+            state.Districts.Add(occupied);
+            state.Tiles.Single(item => item.Id == enemyTile.TileId).ControllerId = ai.Id;
+            var occupier = AddAiUnit(state, ai, home, enemyTile.TileId, UnitType.Militia, 6);
+            AddAiUnit(state, ai, home, enemyTile.TileId, UnitType.Militia, 6);
+
+            var movements = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(movements.Any(item => item.SubjectId == occupier.Id), Is.False,
+                "현지 농업 보급과 후속 병력이 있는 점령군은 자리를 유지해야 한다. 이동 대상: " +
+                string.Join(",", movements.Where(item => item.SubjectId == occupier.Id)
+                    .Select(item => item.TargetId.ToString()).ToArray()));
+        }
+
+        [Test]
+        public void ConquestAiAbandonsUnsupportedOccupiedDistrictAndReturnsHome()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14509, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 200;
+            home.StoredFood = 200;
+            home.TestGovernmentFoodBonus = 50;
+            home.TestGovernmentGoldBonus = 50;
+            var homeGovernment = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var enemyTile = state.MapTopology.FindView(enemyCity.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            var occupied = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = enemyCity.Id, TileId = enemyTile.TileId,
+                Type = DistrictType.Science, ControllerId = ai.Id,
+                IsPillaged = true, IsOperational = false, AssignedCitizens = 1
+            };
+            state.Districts.Add(occupied);
+            state.Tiles.Single(item => item.Id == enemyTile.TileId).ControllerId = ai.Id;
+            var occupier = AddAiUnit(state, ai, home, enemyTile.TileId, UnitType.Militia, 1);
+
+            var movement = EasyPlayerAiPlanner.PlanOrders(state).Single(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit &&
+                item.SubjectId == occupier.Id);
+
+            Assert.That(movement.TargetId, Is.EqualTo(homeGovernment.TileId));
+        }
+
+        [Test]
+        public void ConquestAiRaidsUnguardedDistrictWhenEnemyKeepsOnlyStartingGuard()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14510, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 200;
+            home.StoredFood = 200;
+            home.TestGovernmentFoodBonus = 50;
+            home.TestGovernmentGoldBonus = 50;
+            var homeGovernment = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var targetTile = state.MapTopology.FindView(enemyCity.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            var target = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = enemyCity.Id, TileId = targetTile.TileId,
+                Type = DistrictType.Culture, ControllerId = enemy.Id, IsOperational = true,
+                AssignedCitizens = 1
+            };
+            state.Districts.Add(target);
+            var raider = AddAiUnit(state, ai, home, homeGovernment.TileId, UnitType.Militia, 6);
+
+            var movements = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(ai.AiLowEnemyMilitaryTurns, Is.GreaterThan(0));
+            Assert.That(movements.Any(item => item.SubjectId == raider.Id &&
+                item.TargetId == target.TileId), Is.True,
+                "상대가 시작 수비군만 유지하면 두 번째 전투병부터 빈 전문지구를 압박해야 한다.");
+        }
+
+        [Test]
+        public void ConquestAiKeepsHomeGuardDuringRaidAndSwitchesToGovernmentWhenCapturable()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14512, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 300;
+            home.StoredFood = 300;
+            home.TestGovernmentFoodBonus = 60;
+            home.TestGovernmentGoldBonus = 60;
+            var homeGovernment = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            var homeGuard = state.Units.Single(item => item.OwnerId == ai.Id &&
+                item.TileId == homeGovernment.TileId);
+            AddAiUnit(state, ai, home, homeGovernment.TileId, UnitType.MechanizedInfantry, 10);
+            AddAiUnit(state, ai, home, homeGovernment.TileId, UnitType.MechanizedInfantry, 10);
+            var reinforcements = new[]
+            {
+                AddAiUnit(state, enemy, enemyCity, enemyGovernment.TileId,
+                    UnitType.MechanizedInfantry, 10),
+                AddAiUnit(state, enemy, enemyCity, enemyGovernment.TileId,
+                    UnitType.MechanizedInfantry, 10)
+            };
+            var raidTile = state.MapTopology.FindView(enemyCity.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = enemyCity.Id, TileId = raidTile.TileId,
+                Type = DistrictType.Culture, ControllerId = enemy.Id,
+                AssignedCitizens = 1, IsOperational = true
+            });
+
+            var raidOrders = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(raidOrders.Any(item => item.SubjectId == homeGuard.Id), Is.False,
+                "제한 약탈 중에도 정부청사 수비병 한 기는 남아야 한다.");
+            Assert.That(raidOrders.Count(item => item.TargetId == raidTile.TileId),
+                Is.GreaterThanOrEqualTo(2));
+            Assert.That(raidOrders.Any(item => item.TargetId == enemyGovernment.TileId), Is.False);
+
+            state.Units.RemoveAll(item => reinforcements.Any(reinforcement =>
+                reinforcement.Id == item.Id));
+            var assaultOrders = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(assaultOrders.Any(item => item.SubjectId == homeGuard.Id), Is.False);
+            Assert.That(assaultOrders.Count(item => item.TargetId == enemyGovernment.TileId),
+                Is.GreaterThanOrEqualTo(2),
+                "정부청사 돌파전력이 확보되면 제한 약탈보다 정복 공세로 전환해야 한다.");
+        }
+
+        [Test]
+        public void ConquestAiFullAssaultUsesDistinctEnemyCityEntryTiles()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14511, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 300;
+            home.StoredFood = 300;
+            home.TestGovernmentFoodBonus = 60;
+            home.TestGovernmentGoldBonus = 60;
+            var homeGovernment = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government);
+            for (var index = 0; index < 3; index++)
+                AddAiUnit(state, ai, home, homeGovernment.TileId,
+                    UnitType.MechanizedInfantry, 10);
+
+            var assaults = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit &&
+                item.TargetId == enemyGovernment.TileId && item.Path.Count > 0).ToList();
+            var entryTiles = assaults.Select(command => command.Path.First(tileId =>
+                state.Tiles.Single(tile => tile.Id == tileId).CityId == enemyCity.Id)).Distinct().Count();
+
+            Assert.That(assaults.Count, Is.GreaterThanOrEqualTo(2));
+            Assert.That(entryTiles, Is.GreaterThanOrEqualTo(2),
+                "전면 침공 병력은 예약 경로 혼잡도를 이용해 둘 이상의 진입로로 분산되어야 한다.");
+        }
+
+        [TestCase(PlayerAiStrategy.Science)]
+        [TestCase(PlayerAiStrategy.Culture)]
+        public void VictoryAiMovesSpecialistToMilitaryDistrictDuringDirectThreat(
+            PlayerAiStrategy strategy)
+        {
+            var state = CreateCitizenPriorityState(14520 + (int)strategy, strategy,
+                militaryCitizens: 0, specialistCitizens: 1, directThreat: true);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var military = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Military);
+            var specializedType = strategy == PlayerAiStrategy.Science
+                ? DistrictType.Science : DistrictType.Culture;
+            var specialized = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == specializedType);
+
+            var commands = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id).ToList();
+
+            Assert.That(commands.Any(item => item.Type == GameCommandType.SetCitizenAutoAssignment &&
+                item.SubjectId == city.Id && item.PrimaryValue == 0), Is.True);
+            Assert.That(commands.Any(item => item.Type == GameCommandType.AssignCitizen &&
+                item.SubjectId == specialized.Id && item.PrimaryValue == 0), Is.True);
+            Assert.That(commands.Any(item => item.Type == GameCommandType.AssignCitizen &&
+                item.SubjectId == military.Id && item.PrimaryValue == 1), Is.True);
+        }
+
+        [TestCase(PlayerAiStrategy.Science)]
+        [TestCase(PlayerAiStrategy.Culture)]
+        public void VictoryAiRestoresSpecialistAfterDirectThreatEnds(PlayerAiStrategy strategy)
+        {
+            var state = CreateCitizenPriorityState(14530 + (int)strategy, strategy,
+                militaryCitizens: 1, specialistCitizens: 0, directThreat: false);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var military = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Military);
+            var specializedType = strategy == PlayerAiStrategy.Science
+                ? DistrictType.Science : DistrictType.Culture;
+            var specialized = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == specializedType);
+
+            var commands = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id).ToList();
+
+            Assert.That(commands.Any(item => item.Type == GameCommandType.AssignCitizen &&
+                item.SubjectId == military.Id && item.PrimaryValue == 0), Is.True);
+            Assert.That(commands.Any(item => item.Type == GameCommandType.AssignCitizen &&
+                item.SubjectId == specialized.Id && item.PrimaryValue == 1), Is.True);
+        }
+
+        [TestCase(PlayerAiStrategy.Science)]
+        [TestCase(PlayerAiStrategy.Culture)]
+        public void VictoryAiTrainsCombatUnitFromStaffedMilitaryDistrictDuringDirectThreat(
+            PlayerAiStrategy strategy)
+        {
+            var state = CreateCitizenPriorityState(14540 + (int)strategy, strategy,
+                militaryCitizens: 1, specialistCitizens: 1, directThreat: true);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            city.Population++;
+            var military = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Military);
+
+            var commands = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id).ToList();
+
+            Assert.That(commands.Any(item => item.Type == GameCommandType.StartTraining &&
+                item.SubjectId == military.Id &&
+                !UnitRules.IsSupply((UnitType)item.PrimaryValue)), Is.True);
+        }
+
+        [Test]
+        public void CultureAiSendsAvailableCombatUnitToThreatenedSubjectRelay()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14550, PlayerAiStrategy.Culture);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            var relay = state.Cities.First(item => item.OwnerId == neutral.Id);
+            relay.CultureSubjectToId = ai.Id;
+            home.Gold = 300;
+            home.StoredFood = 300;
+            home.TestGovernmentFoodBonus = 60;
+            home.TestGovernmentGoldBonus = 60;
+            var homeGovernment = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var relayTile = state.MapTopology.FindView(relay.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId));
+            state.Districts.Add(new DistrictState
+            {
+                Id = state.AllocateId(), CityId = relay.Id, TileId = relayTile.TileId,
+                Type = DistrictType.Culture, ControllerId = neutral.Id,
+                AssignedCitizens = 1, IsOperational = true
+            });
+            var defender = AddAiUnit(state, ai, home, homeGovernment.TileId,
+                UnitType.MechanizedInfantry, 10);
+            var hostile = AddAiUnit(state, enemy, enemyCity, relayTile.TileId,
+                UnitType.Militia, 6);
+
+            var movements = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(movements.Any(item => item.SubjectId == defender.Id &&
+                item.TargetId == hostile.TileId), Is.True);
+            Assert.That(movements.Any(item => item.SubjectId == defender.Id &&
+                item.TargetId == state.Districts.Single(district => district.CityId == enemyCity.Id &&
+                    district.Type == DistrictType.Government).TileId), Is.False);
+        }
+
+        [Test]
+        public void CultureSubjectGarrisonDoesNotOccupyOrPillageNeutralDistrict()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14551, PlayerAiStrategy.Culture);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
+            var relay = state.Cities.First(item => item.OwnerId == neutral.Id);
+            relay.CultureSubjectToId = ai.Id;
+            var districtTile = state.MapTopology.FindView(relay.Id).Tiles.First(item =>
+                item.IsBuildable && state.Districts.All(existing => existing.TileId != item.TileId));
+            var district = new DistrictState
+            {
+                Id = state.AllocateId(), CityId = relay.Id, TileId = districtTile.TileId,
+                Type = DistrictType.Culture, ControllerId = neutral.Id,
+                AssignedCitizens = 1, IsOperational = true
+            };
+            state.Districts.Add(district);
+            var tile = state.Tiles.Single(item => item.Id == district.TileId);
+
+            var occupation = OccupationResolver.Resolve(state, ai.Id, tile.Id);
+
+            Assert.That(occupation.DistrictOccupied, Is.False);
+            Assert.That(occupation.PillageRewardGranted, Is.False);
+            Assert.That(district.ControllerId, Is.EqualTo(neutral.Id));
+            Assert.That(tile.ControllerId, Is.EqualTo(neutral.Id));
+            Assert.That(relay.OccupyingPlayerId.IsValid, Is.False);
+        }
+
+        [Test]
+        public void CultureSubjectAndNeutralGarrisonAreNotHostileOnSubjectTile()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14552, PlayerAiStrategy.Culture);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var neutral = state.Players.Single(item => item.Slot == PlayerSlot.Neutral);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var relay = state.Cities.First(item => item.OwnerId == neutral.Id);
+            relay.CultureSubjectToId = ai.Id;
+            var government = state.Districts.Single(item => item.CityId == relay.Id &&
+                item.Type == DistrictType.Government);
+            var adjacent = state.MapTopology.FindView(relay.Id).Tiles.First(item =>
+                item.TileId != government.TileId &&
+                MapTraversal.AreAdjacent(state, item.TileId, government.TileId));
+            var garrison = AddAiUnit(state, ai, home, adjacent.TileId, UnitType.Militia, 6);
+            var command = new GameCommand
+            {
+                CommandId = state.AllocateId(), PlayerId = ai.Id,
+                TurnNumber = state.TurnNumber, Type = GameCommandType.MoveUnit,
+                SubjectId = garrison.Id, TargetId = government.TileId
+            };
+            command.Path.Add(government.TileId);
+
+            var movement = MovementResolver.Resolve(state, command);
+
+            Assert.That(movement.StopReason, Is.EqualTo(MovementStopReason.Completed));
+            Assert.That(garrison.TileId, Is.EqualTo(government.TileId));
+            Assert.That(UnitDiplomacyRules.AreHostile(state, ai.Id, neutral.Id,
+                government.TileId), Is.False);
         }
 
         private static string Signature(GameCommand command) =>
@@ -532,6 +1165,62 @@ namespace LittleCiv.Tests
             $"{command.Type}:{command.SubjectId.Value}:{command.TargetId.Value}:" +
             $"{command.PrimaryValue}:{command.SecondaryValue}:" +
             string.Join(",", command.Path.Select(item => item.Value));
+
+        private static UnitState AddAiUnit(GameState state, PlayerState player, CityState home,
+            EntityId tileId, UnitType type, int food)
+        {
+            var unit = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = player.Id, HomeCityId = home.Id,
+                TileId = tileId, Type = type, HitPoints = UnitRules.MaximumHitPoints(type),
+                CarriedFood = food, RemainingMovement = UnitRules.Movement(type),
+                CreatedTurn = state.TurnNumber - 1
+            };
+            state.Units.Add(unit);
+            return unit;
+        }
+
+        private static GameState CreateCitizenPriorityState(int seed, PlayerAiStrategy strategy,
+            int militaryCitizens, int specialistCitizens, bool directThreat)
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(seed, strategy);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            city.Population = 4;
+            city.GovernmentCitizens = 1;
+            city.Gold = 200;
+            city.StoredFood = 200;
+            city.TestGovernmentFoodBonus = 50;
+            city.TestGovernmentGoldBonus = 50;
+            city.CitizenAutoAssignment = directThreat;
+            state.Districts.RemoveAll(item => item.CityId == city.Id &&
+                item.Type != DistrictType.Government);
+            var tiles = state.MapTopology.FindView(city.Id).Tiles.Where(item => item.IsBuildable &&
+                state.Districts.All(district => district.TileId != item.TileId)).Take(4).ToArray();
+            var specialized = strategy == PlayerAiStrategy.Science
+                ? DistrictType.Science : DistrictType.Culture;
+            var types = new[]
+            {
+                DistrictType.Agriculture, DistrictType.Commerce, DistrictType.Military, specialized
+            };
+            var citizens = new[] { 1, 1, militaryCitizens, specialistCitizens };
+            for (var index = 0; index < types.Length; index++)
+                state.Districts.Add(new DistrictState
+                {
+                    Id = state.AllocateId(), CityId = city.Id, TileId = tiles[index].TileId,
+                    Type = types[index], ControllerId = ai.Id, AssignedCitizens = citizens[index],
+                    IsOperational = citizens[index] > 0
+                });
+            if (directThreat)
+            {
+                var enemyGovernment = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                    item.Type == DistrictType.Government);
+                AddAiUnit(state, enemy, enemyCity, enemyGovernment.TileId, UnitType.Militia, 6);
+            }
+            return state;
+        }
 
         private static GameState CreateTwoPlayerTrainingBudgetState()
         {

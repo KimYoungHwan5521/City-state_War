@@ -85,6 +85,8 @@ namespace LittleCiv.Core
                 TileId = tileId
             };
             if (NeutralLevyResolver.IsProtectedCityTile(state, occupyingPlayerId, tileId)) return result;
+            if (UnitDiplomacyRules.IsFriendlyCultureGarrison(state, occupyingPlayerId, tileId))
+                return result;
             var district = FindDistrict(state, tileId);
             if (district == null || district.ControllerId == occupyingPlayerId) return result;
             if (HasEnemyUnit(state, tileId, occupyingPlayerId)) return result;

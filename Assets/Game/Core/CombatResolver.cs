@@ -197,7 +197,9 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                if (unit.TileId == tileId && unit.OwnerId != attackerOwner) result.Add(unit);
+                if (unit.TileId == tileId && unit.OwnerId != attackerOwner &&
+                    UnitDiplomacyRules.AreHostile(state, attackerOwner, unit.OwnerId, tileId))
+                    result.Add(unit);
             }
             return result;
         }
@@ -226,7 +228,8 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                if (unit.TileId == tileId && unit.OwnerId != ownerId && unit.HitPoints > 0) return true;
+                if (unit.TileId == tileId && unit.OwnerId != ownerId && unit.HitPoints > 0 &&
+                    UnitDiplomacyRules.AreHostile(state, ownerId, unit.OwnerId, tileId)) return true;
             }
             return false;
         }

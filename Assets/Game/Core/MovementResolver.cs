@@ -105,7 +105,9 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                if (unit.TileId == tileId && unit.OwnerId != movingUnit.OwnerId) return true;
+                if (unit.TileId == tileId && unit.OwnerId != movingUnit.OwnerId &&
+                    UnitDiplomacyRules.AreHostile(state, movingUnit.OwnerId, unit.OwnerId, tileId))
+                    return true;
             }
 
             return false;

@@ -344,36 +344,13 @@ namespace LittleCiv.Runtime
 
         private List<GameEntityId> FindShortestTilePath(UnitState movingUnit, GameEntityId destinationId)
         {
-            var startId = movingUnit.TileId;
-            var frontier = new Queue<GameEntityId>();
-            var previous = new Dictionary<GameEntityId, GameEntityId>();
-            frontier.Enqueue(startId);
-            previous[startId] = default;
-
-            while (frontier.Count > 0)
+            var traffic = new Dictionary<GameEntityId, int>();
+            foreach (var pair in plannedMoves)
             {
-                var current = frontier.Dequeue();
-                if (current == destinationId) break;
-                for (var index = 0; index < state.Tiles.Count; index++)
-                {
-                    var next = state.Tiles[index].Id;
-                    if (previous.ContainsKey(next) || !MapTraversal.AreAdjacent(state, current, next)) continue;
-                    if (next != destinationId && HasEnemyUnit(movingUnit, next)) continue;
-                    previous[next] = current;
-                    frontier.Enqueue(next);
-                }
+                if (pair.Key == movingUnit.Id) continue;
+                TacticalPathfinder.AddTraffic(traffic, pair.Value.Path);
             }
-
-            if (!previous.ContainsKey(destinationId)) return new List<GameEntityId>();
-            var result = new List<GameEntityId>();
-            var cursor = destinationId;
-            while (cursor != startId)
-            {
-                result.Add(cursor);
-                cursor = previous[cursor];
-            }
-            result.Reverse();
-            return result;
+            return TacticalPathfinder.FindPath(state, movingUnit, destinationId, null, traffic);
         }
 
         private bool HasEnemyUnit(UnitState movingUnit, GameEntityId tileId)

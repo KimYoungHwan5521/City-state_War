@@ -65,7 +65,11 @@ namespace LittleCiv.Core
                     var rightUnit = FindUnit(state, right.SubjectId);
                     if (rightUnit == null || leftUnit.OwnerId == rightUnit.OwnerId) continue;
                     if (FirstDestination(left) == rightUnit.TileId &&
-                        FirstDestination(right) == leftUnit.TileId)
+                        FirstDestination(right) == leftUnit.TileId &&
+                        (UnitDiplomacyRules.AreHostile(state, leftUnit.OwnerId, rightUnit.OwnerId,
+                             rightUnit.TileId) ||
+                         UnitDiplomacyRules.AreHostile(state, leftUnit.OwnerId, rightUnit.OwnerId,
+                             leftUnit.TileId)))
                     {
                         plan.BlockedCommandReasons[left.CommandId] = MovementStopReason.SwapConflict;
                         plan.BlockedCommandReasons[right.CommandId] = MovementStopReason.SwapConflict;
@@ -180,6 +184,8 @@ namespace LittleCiv.Core
                     var other = allMoves[moveIndex];
                     if (other.CommandId == command.CommandId || other.PlayerId == command.PlayerId ||
                         other.Path == null) continue;
+                    if (!UnitDiplomacyRules.AreHostile(state, command.PlayerId, other.PlayerId,
+                            command.Path[i])) continue;
                     if (other.Path.Contains(command.Path[i])) return command.Path[i];
                 }
             }

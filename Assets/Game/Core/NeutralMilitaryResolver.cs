@@ -7,7 +7,15 @@ namespace LittleCiv.Core
     {
         public readonly List<UnitPromotionResult> Promotions = new List<UnitPromotionResult>();
         public readonly List<UnitTrainingState> Trainings = new List<UnitTrainingState>();
+        public readonly List<NeutralFoodTransferResult> FoodTransfers = new List<NeutralFoodTransferResult>();
         public readonly List<GameCommand> Movements = new List<GameCommand>();
+    }
+
+    public sealed class NeutralFoodTransferResult
+    {
+        public EntityId SupplierId;
+        public EntityId ReceiverId;
+        public int Amount;
     }
 
     public sealed class NeutralForceTarget
@@ -30,6 +38,7 @@ namespace LittleCiv.Core
                 var city = cities[cityIndex];
                 PromoteHomeUnits(state, city, result);
                 StartNeededTraining(state, city, result);
+                TransferAvailableFood(state, city, result);
                 IssueDefensiveMovement(state, city, result);
             }
             return result;
@@ -63,9 +72,30 @@ namespace LittleCiv.Core
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
             var emergencyGuard = SelectEmergencyGuard(units, government.TileId);
             var needsEmergencyGuard = !governmentThreatened && emergencyGuard == null;
+            var plannedTraffic = new Dictionary<EntityId, int>();
+            var formationIndex = 0;
             for (var index = 0; index < units.Count; index++)
             {
                 var unit = units[index];
+                if (UnitRules.IsSupply(unit.Type))
+                {
+                    var supplyTarget = SelectSupplyTarget(state, city,
+                        government, hostileTargets);
+                    if (!supplyTarget.IsValid || supplyTarget == unit.TileId) continue;
+                    var supplyPath = TacticalPathfinder.FindPath(state, unit, supplyTarget, null,
+                        plannedTraffic, formationIndex);
+                    if (supplyPath.Count == 0 || PathEndsInHostileTile(state, city, supplyPath)) continue;
+                    result.Movements.Add(new GameCommand
+                    {
+                        CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                        TurnNumber = state.TurnNumber, Type = GameCommandType.MoveUnit,
+                        SubjectId = unit.Id, TargetId = supplyTarget, SecondaryValue = 0,
+                        Path = supplyPath
+                    });
+                    TacticalPathfinder.AddTraffic(plannedTraffic, supplyPath);
+                    formationIndex++;
+                    continue;
+                }
                 if (!governmentThreatened && emergencyGuard != null && unit.Id == emergencyGuard.Id)
                     continue;
                 var outsideHome = !state.Tiles.Exists(tile => tile.Id == unit.TileId && tile.CityId == city.Id);
@@ -92,7 +122,8 @@ namespace LittleCiv.Core
                     target = ClosestDefensiveDistrict(state, city, approachingHostiles[0].TileId);
                 }
                 if (!target.IsValid || target == unit.TileId) continue;
-                var path = FindPath(state, unit, target);
+                var path = TacticalPathfinder.FindPath(state, unit, target, null,
+                    plannedTraffic, formationIndex);
                 if (path.Count == 0) continue;
                 result.Movements.Add(new GameCommand
                 {
@@ -100,7 +131,105 @@ namespace LittleCiv.Core
                     TurnNumber = state.TurnNumber, Type = GameCommandType.MoveUnit,
                     SubjectId = unit.Id, TargetId = target, SecondaryValue = 1, Path = path
                 });
+                TacticalPathfinder.AddTraffic(plannedTraffic, path);
+                formationIndex++;
             }
+        }
+
+        private static void TransferAvailableFood(GameState state, CityState city,
+            NeutralMilitaryResult result)
+        {
+            var suppliers = state.Units.FindAll(item => item.OwnerId == city.OwnerId &&
+                item.HomeCityId == city.Id && item.HitPoints > 0 && item.CarriedFood > 0 &&
+                UnitRules.IsSupply(item.Type));
+            suppliers.Sort((left, right) => left.Id.CompareTo(right.Id));
+            for (var supplierIndex = 0; supplierIndex < suppliers.Count; supplierIndex++)
+            {
+                var supplier = suppliers[supplierIndex];
+                var receivers = state.Units.FindAll(item => item.OwnerId == city.OwnerId &&
+                    item.HomeCityId == city.Id && item.HitPoints > 0 &&
+                    !UnitRules.IsSupply(item.Type) && item.TileId == supplier.TileId &&
+                    item.CarriedFood < UnitRules.FoodCapacity(state, item));
+                receivers.Sort((left, right) => CompareFoodNeed(state, left, right));
+                for (var receiverIndex = 0; receiverIndex < receivers.Count &&
+                     supplier.CarriedFood > 0; receiverIndex++)
+                {
+                    var command = new GameCommand
+                    {
+                        CommandId = state.AllocateId(), PlayerId = city.OwnerId,
+                        TurnNumber = state.TurnNumber, Type = GameCommandType.TransferFood,
+                        SubjectId = supplier.Id, TargetId = receivers[receiverIndex].Id,
+                        PrimaryValue = UnitRules.FoodCapacity(state, receivers[receiverIndex])
+                    };
+                    if (!UnitFoodResolver.TryTransfer(state, command, out var amount) || amount <= 0)
+                        continue;
+                    result.FoodTransfers.Add(new NeutralFoodTransferResult
+                    {
+                        SupplierId = supplier.Id, ReceiverId = receivers[receiverIndex].Id,
+                        Amount = amount
+                    });
+                }
+            }
+        }
+
+        private static EntityId SelectSupplyTarget(GameState state, CityState city,
+            DistrictState government,
+            List<UnitState> hostileTargets)
+        {
+            UnitState receiver = null;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var candidate = state.Units[index];
+                if (candidate.OwnerId != city.OwnerId || candidate.HomeCityId != city.Id ||
+                    UnitRules.IsSupply(candidate.Type) || candidate.HitPoints <= 0 ||
+                    candidate.CarriedFood >= UnitRules.FoodCapacity(state, candidate) ||
+                    hostileTargets.Exists(hostile => hostile.TileId == candidate.TileId)) continue;
+                if (receiver == null || CompareFoodNeed(state, candidate, receiver) < 0)
+                    receiver = candidate;
+            }
+            if (receiver != null) return receiver.TileId;
+            return SafeRearTarget(state, city, government, hostileTargets);
+        }
+
+        private static int CompareFoodNeed(GameState state, UnitState left, UnitState right)
+        {
+            var leftRatio = left.CarriedFood * 100 /
+                            Math.Max(1, UnitRules.FoodCapacity(state, left));
+            var rightRatio = right.CarriedFood * 100 /
+                             Math.Max(1, UnitRules.FoodCapacity(state, right));
+            var comparison = leftRatio.CompareTo(rightRatio);
+            return comparison != 0 ? comparison : left.Id.CompareTo(right.Id);
+        }
+
+        private static EntityId SafeRearTarget(GameState state, CityState city,
+            DistrictState government, List<UnitState> hostileTargets)
+        {
+            if (government != null && government.ControllerId == city.OwnerId &&
+                !hostileTargets.Exists(item => item.TileId == government.TileId))
+                return government.TileId;
+            DistrictState selected = null;
+            for (var index = 0; index < state.Districts.Count; index++)
+            {
+                var district = state.Districts[index];
+                if (district.CityId != city.Id || district.ControllerId != city.OwnerId ||
+                    district.RemainingConstructionTurns > 0 || district.IsPillaged ||
+                    hostileTargets.Exists(item => item.TileId == district.TileId)) continue;
+                var districtPriority = district.Type == DistrictType.Military ? 0 : 1;
+                var selectedPriority = selected != null && selected.Type == DistrictType.Military ? 0 : 1;
+                if (selected == null || districtPriority < selectedPriority ||
+                    districtPriority == selectedPriority && district.Id.CompareTo(selected.Id) < 0)
+                    selected = district;
+            }
+            return selected == null ? default : selected.TileId;
+        }
+
+        private static bool PathEndsInHostileTile(GameState state, CityState city,
+            List<EntityId> path)
+        {
+            if (path == null || path.Count == 0) return false;
+            var target = path[path.Count - 1];
+            return state.Units.Exists(item => item.TileId == target && item.HitPoints > 0 &&
+                item.OwnerId != city.OwnerId && IsHostileToCity(state, city, item.OwnerId));
         }
 
         private static UnitState SelectEmergencyGuard(List<UnitState> units, EntityId governmentTileId)
@@ -191,30 +320,7 @@ namespace LittleCiv.Core
 
         private static List<EntityId> FindPath(GameState state, UnitState unit, EntityId target)
         {
-            var queue = new Queue<EntityId>();
-            var previous = new Dictionary<EntityId, EntityId>();
-            queue.Enqueue(unit.TileId);
-            previous[unit.TileId] = default;
-            while (queue.Count > 0)
-            {
-                var current = queue.Dequeue();
-                if (current == target) break;
-                for (var index = 0; index < state.Tiles.Count; index++)
-                {
-                    var next = state.Tiles[index].Id;
-                    if (previous.ContainsKey(next) || !MapTraversal.AreAdjacent(state, current, next)) continue;
-                    var enemy = state.Units.Exists(item => item.TileId == next &&
-                        item.OwnerId != unit.OwnerId && item.HitPoints > 0);
-                    if (enemy && next != target) continue;
-                    previous[next] = current;
-                    queue.Enqueue(next);
-                }
-            }
-            if (!previous.ContainsKey(target)) return new List<EntityId>();
-            var reversed = new List<EntityId>();
-            for (var cursor = target; cursor != unit.TileId; cursor = previous[cursor]) reversed.Add(cursor);
-            reversed.Reverse();
-            return reversed;
+            return TacticalPathfinder.FindPath(state, unit, target);
         }
 
         public static int CombatTarget(NeutralCitySpecialization specialization,

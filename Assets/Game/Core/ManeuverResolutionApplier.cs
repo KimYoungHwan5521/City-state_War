@@ -108,7 +108,9 @@ namespace LittleCiv.Core
             for (var i = 0; i < state.Units.Count; i++)
             {
                 var unit = state.Units[i];
-                if (unit.TileId == resolution.BlockedTileId && unit.OwnerId != resolution.PlayerId)
+                if (unit.TileId == resolution.BlockedTileId && unit.OwnerId != resolution.PlayerId &&
+                    UnitDiplomacyRules.AreHostile(state, resolution.PlayerId, unit.OwnerId,
+                        resolution.BlockedTileId))
                 {
                     return !unit.HasAutomaticDefense;
                 }

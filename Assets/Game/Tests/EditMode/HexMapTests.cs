@@ -178,6 +178,67 @@ namespace LittleCiv.Tests
             Assert.That(visibleCities, Is.EqualTo(new[] { sharedTile.CityId }));
         }
 
+        [Test]
+        public void TacticalPathDoesNotDependOnGlobalUnitId()
+        {
+            var state = PrototypeMatchFactory.Create(1011);
+            var player = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var ownCity = state.Cities.Single(item => item.OwnerId == player.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            var source = state.Districts.Single(item => item.CityId == ownCity.Id &&
+                item.Type == DistrictType.Government).TileId;
+            var target = state.Districts.Single(item => item.CityId == enemyCity.Id &&
+                item.Type == DistrictType.Government).TileId;
+            var allowed = new HashSet<EntityId> { ownCity.Id, enemyCity.Id };
+            var first = new UnitState
+            {
+                Id = new EntityId(90001), OwnerId = player.Id, TileId = source,
+                Type = UnitType.Militia, HitPoints = 16
+            };
+            var second = new UnitState
+            {
+                Id = new EntityId(99999), OwnerId = player.Id, TileId = source,
+                Type = UnitType.Militia, HitPoints = 16
+            };
+
+            var firstPath = TacticalPathfinder.FindPath(state, first, target, allowed);
+            var secondPath = TacticalPathfinder.FindPath(state, second, target, allowed);
+
+            Assert.That(firstPath, Is.Not.Empty);
+            Assert.That(secondPath, Is.EqualTo(firstPath));
+        }
+
+        [Test]
+        public void OppositePlayerRoutesAreRotationallySymmetric()
+        {
+            var state = PrototypeMatchFactory.Create(1012);
+            var firstPlayer = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var secondPlayer = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var firstCity = state.Cities.Single(item => item.OwnerId == firstPlayer.Id);
+            var secondCity = state.Cities.Single(item => item.OwnerId == secondPlayer.Id);
+            var firstUnit = state.Units.Single(item => item.HomeCityId == firstCity.Id);
+            var secondUnit = state.Units.Single(item => item.HomeCityId == secondCity.Id);
+            var firstTarget = state.Districts.Single(item => item.CityId == secondCity.Id &&
+                item.Type == DistrictType.Government).TileId;
+            var secondTarget = state.Districts.Single(item => item.CityId == firstCity.Id &&
+                item.Type == DistrictType.Government).TileId;
+            var allowed = new HashSet<EntityId> { firstCity.Id, secondCity.Id };
+
+            var forward = TacticalPathfinder.FindPath(state, firstUnit, firstTarget, allowed)
+                .Select(item => MapTraversal.GlobalCoordinate(state, item).Value).ToList();
+            var backward = TacticalPathfinder.FindPath(state, secondUnit, secondTarget, allowed)
+                .Select(item => MapTraversal.GlobalCoordinate(state, item).Value).ToList();
+            var firstCenter = WorldMapGenerator.CityCenterCoordinate(firstCity.WorldQ, firstCity.WorldR);
+            var secondCenter = WorldMapGenerator.CityCenterCoordinate(secondCity.WorldQ, secondCity.WorldR);
+
+            Assert.That(backward.Count, Is.EqualTo(forward.Count));
+            for (var index = 0; index < forward.Count; index++)
+                Assert.That(backward[index], Is.EqualTo(new HexCoord(
+                    firstCenter.Q + secondCenter.Q - forward[index].Q,
+                    firstCenter.R + secondCenter.R - forward[index].R)));
+        }
+
         private static GameState CreatePrototypeState()
         {
             var state = GameState.CreateNew(1001);

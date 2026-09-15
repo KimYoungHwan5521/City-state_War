@@ -48,7 +48,11 @@ namespace LittleCiv.Core
                     HasMetCultureVictoryCondition = item.HasMetCultureVictoryCondition,
                     AiStrategy = item.AiStrategy,
                     AiLowEnemyMilitaryTurns = item.AiLowEnemyMilitaryTurns,
-                    AiStalledAttackTurns = item.AiStalledAttackTurns
+                    AiStalledAttackTurns = item.AiStalledAttackTurns,
+                    AiLastEnemyCombatPower = item.AiLastEnemyCombatPower,
+                    AiLastOccupiedEnemyDistricts = item.AiLastOccupiedEnemyDistricts,
+                    AiLastGovernmentDistance = item.AiLastGovernmentDistance,
+                    AiNuclearPivot = item.AiNuclearPivot
                 });
             }
 
