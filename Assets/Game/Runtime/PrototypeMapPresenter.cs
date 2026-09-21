@@ -1,3 +1,4 @@
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using LittleCiv.Core;
@@ -10,8 +11,19 @@ namespace LittleCiv.Runtime
     public sealed class PrototypeMapPresenter : MonoBehaviour
     {
         private const float HexRadius = 1f;
-        private const float UiScale = 1.5f;
+        // Preserve a 1280 x 720 logical layout across smaller 16:9 Game views.
+        private static float UiScale => Mathf.Max(0.1f,
+            Mathf.Min(1.5f, Mathf.Min(Screen.width / 1280f, Screen.height / 720f)));
         [SerializeField] private PlayerAiStrategy opponentAiStrategy = PlayerAiStrategy.Science;
+
+        private enum FrontEndPage
+        {
+            Main,
+            SinglePlayer,
+            OnlineHost,
+            OnlineJoin,
+            InGame
+        }
 
         private sealed class UnitRoutePlan
         {
@@ -65,6 +77,10 @@ namespace LittleCiv.Runtime
         private GameEntityId selectedTileId;
         private GameEntityId selectedUnitId;
         private readonly HashSet<GameEntityId> selectedUnitGroup = new HashSet<GameEntityId>();
+        private readonly HashSet<GameEntityId> animatedUnitIds = new HashSet<GameEntityId>();
+        private Coroutine movementAnimation;
+        private GameEntityId pendingCombatFocusTile;
+        private GameEntityId pendingManeuverFocusTile;
         private GameEntityId activePlayerId;
         private bool hasFramedWorld;
         private string statusMessage = "병력을 선택한 뒤 목적지를 우클릭하세요.";
@@ -78,6 +94,8 @@ namespace LittleCiv.Runtime
         private Material playerTwoUnitMaterial;
         private Material neutralUnitMaterial;
         private readonly Dictionary<GameEntityId, Material> neutralCityUnitMaterials =
+            new Dictionary<GameEntityId, Material>();
+        private readonly Dictionary<GameEntityId, Material> pillagedDistrictMaterials =
             new Dictionary<GameEntityId, Material>();
         private Material agricultureMaterial;
         private Material commerceMaterial;
@@ -93,23 +111,50 @@ namespace LittleCiv.Runtime
         private Material modernDefenseMaterial;
         private Texture2D routeTurnMarker;
         private bool showResearchPanel;
+        private bool showCityDetails;
         private bool showCheatPanel;
         private bool showNeutralTradePanel;
         private Vector2 researchScroll;
         private Vector2 neutralTradeScroll;
         private Vector2 combatLogScroll;
+        private int logFilter;
+        private bool logCollapsed;
+        private bool followLatestLog = true;
+        private int matchEndTurn;
+        private Vector2 selectionScroll;
+        private readonly Dictionary<GameEntityId, string> combatPreviews = new Dictionary<GameEntityId, string>();
+        private Vector2 cityDetailsScroll;
+        private Vector2 cheatScroll;
+        private bool HasManagementPanel => showCityDetails || showResearchPanel || showCheatPanel || showNeutralTradePanel;
+
+        private void CloseManagementPanels()
+        {
+            showCityDetails = showResearchPanel = showCheatPanel = showNeutralTradePanel = false;
+        }
+        private int selectionTab;
         private int levyExtraBid;
+        private FrontEndPage frontEndPage = FrontEndPage.Main;
+        private string onlineRoomCode = string.Empty;
+        private string frontEndMessage = "플레이할 방식을 선택하세요.";
 
         private void Start()
         {
             CreateMaterials();
             EnsureCamera();
-            RestartMatch();
+            ReturnToMainMenu();
         }
 
         private void RestartMatch()
         {
+            frontEndPage = FrontEndPage.InGame;
+            SetMapCameraInput(true);
             plannedMoves.Clear();
+            combatPreviews.Clear();
+            animatedUnitIds.Clear();
+            if (movementAnimation != null) StopCoroutine(movementAnimation);
+            movementAnimation = null;
+            pendingCombatFocusTile = default;
+            pendingManeuverFocusTile = default;
             routePlans.Clear();
             plannedDistricts.Clear();
             plannedTrainings.Clear();
@@ -135,7 +180,15 @@ namespace LittleCiv.Runtime
             researchScroll = Vector2.zero;
             neutralTradeScroll = Vector2.zero;
             combatLogScroll = Vector2.zero;
+            logFilter = 0;
+            logCollapsed = false;
+            followLatestLog = true;
+            matchEndTurn = 0;
+            selectionScroll = Vector2.zero;
+            selectionTab = 0;
+            cityDetailsScroll = cheatScroll = Vector2.zero;
             showResearchPanel = false;
+            showCityDetails = false;
             showCheatPanel = false;
             showNeutralTradePanel = false;
             turnLog.Clear();
@@ -158,6 +211,13 @@ namespace LittleCiv.Runtime
 
         private void Update()
         {
+            if (frontEndPage != FrontEndPage.InGame || state == null) return;
+            if (state.IsGameOver)
+            {
+                SetMapCameraInput(false);
+                return;
+            }
+
             if (Keyboard.current != null && Keyboard.current.tabKey.wasPressedThisFrame)
             {
                 focusedCityIndex = (focusedCityIndex + 1) % state.Cities.Count;
@@ -208,23 +268,67 @@ namespace LittleCiv.Runtime
 
         private bool IsPointerOverHud(Vector2 screenPosition)
         {
+            if (state != null && state.IsGameOver) return true;
             var guiPosition = new Vector2(screenPosition.x, Screen.height - screenPosition.y) / UiScale;
-            if (new Rect(16f, 16f, 410f, 425f).Contains(guiPosition)) return true;
+            if (new Rect(8f, 8f, Screen.width / UiScale - 16f, 110f).Contains(guiPosition)) return true;
+            if (HasManagementPanel && ResearchPanelRect().Contains(guiPosition)) return true;
+            if (combatLog.Count > 0 && CombatLogRect().Contains(guiPosition)) return true;
             if ((showResearchPanel || showCheatPanel || showNeutralTradePanel) && ResearchPanelRect().Contains(guiPosition)) return true;
             if (!selectedTileId.IsValid) return false;
-            var logicalWidth = Screen.width / UiScale;
-            var compact = logicalWidth < 900f;
-            var panelRect = compact
-                ? new Rect(16f, 416f, 414f, 600f)
-                : new Rect(logicalWidth - 430f, 16f, 414f, 600f);
-            return panelRect.Contains(guiPosition);
+            return SelectionPanelRect().Contains(guiPosition);
+        }
+
+        public bool IsPointerOverInterface(Vector2 position)
+        {
+            return frontEndPage != FrontEndPage.InGame || IsPointerOverHud(position);
+        }
+
+        private void ReturnToMainMenu()
+        {
+            if (movementAnimation != null) StopCoroutine(movementAnimation);
+            movementAnimation = null;
+            pendingCombatFocusTile = default;
+            pendingManeuverFocusTile = default;
+            animatedUnitIds.Clear();
+            ClearMapViews();
+            SetMapCameraInput(false);
+            state = null;
+            simulator = null;
+            matchAuditLog = null;
+            selectedTileId = default;
+            selectedUnitId = default;
+            selectedUnitGroup.Clear();
+            frontEndPage = FrontEndPage.Main;
+            frontEndMessage = "플레이할 방식을 선택하세요.";
+        }
+
+        private static void SetMapCameraInput(bool enabled)
+        {
+            var camera = Camera.main;
+            if (camera == null) return;
+            var controller = camera.GetComponent<PrototypeMapCamera>();
+            if (controller != null) controller.enabled = enabled;
+        }
+
+        private void ClearMapViews()
+        {
+            foreach (var view in spawnedViews)
+            {
+                if (view != null) Destroy(view);
+            }
+            spawnedViews.Clear();
+            visibleTilePositions.Clear();
         }
 
         public void SelectTile(GameEntityId tileId)
         {
+            CloseManagementPanels();
+            selectionScroll = Vector2.zero;
+            selectionTab = 0;
             selectedUnitId = default(GameEntityId);
             selectedUnitGroup.Clear();
             selectedTileId = tileId;
+            if (state.Units.Any(item => item.TileId == tileId)) selectionTab = 1;
             var selectedDistrict = state.Districts.Find(item => item.TileId == tileId);
             statusMessage = selectedDistrict != null
                 ? $"{DistrictName(selectedDistrict.Type)} 선택. 타일 패널에서 지구 행동을 선택하세요."
@@ -237,6 +341,7 @@ namespace LittleCiv.Runtime
 
         public void SelectUnit(GameEntityId unitId, GameEntityId tileId)
         {
+            CloseManagementPanels();
             var unit = state.Units.Find(item => item.Id == unitId);
             if (unit == null || unit.OwnerId != activePlayerId)
             {
@@ -245,6 +350,8 @@ namespace LittleCiv.Runtime
                 return;
             }
             selectedUnitId = unitId;
+            selectionTab = 1;
+            selectionScroll = Vector2.zero;
             selectedUnitGroup.Clear();
             selectedUnitGroup.Add(unitId);
             selectedTileId = tileId;
@@ -342,8 +449,12 @@ namespace LittleCiv.Runtime
             statusMessage = reserved
                 ? $"경로 예약: {route.Path.Count}칸, 약 {turns}턴 후 도착."
                 : "장기 경로를 저장했습니다. 이 병력은 이번 턴에 이동할 수 없습니다.";
+            combatPreviews.Remove(unit.Id);
             if (reserved && HasEnemyUnit(unit, tileId))
-                statusMessage += " " + CombatPreview(unit, tileId);
+            {
+                combatPreviews[unit.Id] = CombatPreview(unit, tileId);
+                statusMessage += " 교전 예상은 선택 패널의 이동·예측 탭에서 확인하세요.";
+            }
             var fallbackCityId = state.Cities[focusedCityIndex].Id;
             ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, unit.TileId, fallbackCityId));
             return true;
@@ -365,12 +476,13 @@ namespace LittleCiv.Runtime
                 defenders.Select(defender =>
                 {
                     var after = preview.Units.Find(item => item.Id == defender.Id);
-                    return $"{UnitName(defender.Type)} {defender.Id} 체력 " +
-                           $"{(after == null ? 0 : after.HitPoints)}/{UnitRules.MaximumHitPoints(defender.Type)}";
+                    return $"{UnitName(defender.Type)} {defender.Id}: 체력 {defender.HitPoints} → " +
+                           $"{(after == null ? 0 : after.HitPoints)}/{UnitRules.MaximumHitPoints(defender.Type)}" +
+                           (after == null ? " (전멸)" : string.Empty);
                 }));
-            return $"전투 예상: 공격자 체력 {(survivor == null ? 0 : survivor.HitPoints)}/" +
-                   $"{UnitRules.MaximumHitPoints(attacker.Type)}; 수비군 {defenderForecast}; " +
-                   $"진입 {(result.AttackerAdvanced ? "가능" : "불가")}.";
+            return $"공격: {UnitName(attacker.Type)} {attacker.Id}\n체력 {attacker.HitPoints} → {(survivor == null ? 0 : survivor.HitPoints)}/" +
+                   $"{UnitRules.MaximumHitPoints(attacker.Type)}{(survivor == null ? " (전멸)" : string.Empty)}\n\n수비:\n{defenderForecast.Replace(", ", "\n")}\n\n" +
+                   $"공격 후 진입: {(result.AttackerAdvanced ? "가능" : "불가")}";
         }
 
         private List<GameEntityId> FindShortestTilePath(UnitState movingUnit, GameEntityId destinationId)
@@ -508,6 +620,7 @@ namespace LittleCiv.Runtime
                     simulator.Planning.Cancel(activePlayerId, command.CommandId);
                 plannedMoves.Remove(targets[index]);
                 routePlans.Remove(targets[index]);
+                combatPreviews.Remove(targets[index]);
             }
             statusMessage = $"선택 병력 {targets.Count}부대의 이동 경로를 취소했습니다.";
             ShowCities(new[] { state.Cities[focusedCityIndex].Id });
@@ -519,6 +632,7 @@ namespace LittleCiv.Runtime
             if (!IsManeuverRecommandPhase() && NeedsResearchSelection(active))
             {
                 statusMessage = "턴을 확정하기 전에 연구를 선택하세요.";
+                CloseManagementPanels();
                 showResearchPanel = true;
                 return;
             }
@@ -540,13 +654,25 @@ namespace LittleCiv.Runtime
             }
 
             var auditBeforeState = MatchAuditLogWriter.CaptureState(state, "턴 처리 전 상태");
+            var movementStartTiles = state.Units.ToDictionary(item => item.Id, item => item.TileId);
             var resolution = simulator.ResolveConfirmedTurn();
+            combatPreviews.Clear();
             ResolveManeuversAsCombat(resolution);
+            PullThroughWinningAttackers(resolution);
             FinalizeConquestAfterManeuverCombat(resolution);
             matchAuditLog?.AppendTurn(auditBeforeState, resolution, state);
             for (var eventIndex = 0; eventIndex < resolution.Events.Count; eventIndex++)
             {
                 var gameEvent = resolution.Events[eventIndex];
+                if (gameEvent.Type == GameEventType.UnitMoved)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 이동: 병력 {gameEvent.SourceId} → 타일 {gameEvent.TargetId}");
+                if (gameEvent.Type == GameEventType.DistrictConstructionCompleted)
+                {
+                    var completedDistrict = state.Districts.Find(item => item.Id == gameEvent.SourceId);
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 지구 건설 완료: " +
+                        (completedDistrict == null ? $"지구 {gameEvent.SourceId}" :
+                            $"{DistrictName(completedDistrict.Type)} · 타일 {completedDistrict.TileId}"));
+                }
                 if (gameEvent.Type == GameEventType.ResearchSelected)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 연구 선택: {PlayerDisplayName(gameEvent.SourceId)} | " +
                                  ResearchName((ResearchType)gameEvent.PrimaryValue));
@@ -649,11 +775,29 @@ namespace LittleCiv.Runtime
                           $"{PlayerName(FindPlayer(state.WinnerId).Slot)} 과학승리"
                         : $"게임 종료 — {PlayerName(FindPlayer(state.WinnerId).Slot)}의 {VictoryName(state.Victory)}."
                 : PlanningTurnStatus(FindPlayer(activePlayerId));
+            if (state.IsGameOver)
+            {
+                matchEndTurn = resolution.ResolvedTurnNumber;
+                SetMapCameraInput(false);
+                AddCombatLog($"{resolution.ResolvedTurnNumber}턴 {statusMessage}");
+            }
             if (!state.IsGameOver)
             {
                 PrepareAutomaticRoutes(activePlayerId);
                 PrepareAutomaticTrades(activePlayerId);
             }
+            var resolvedMoveCommands = resolution.Commands
+                .Where(command => command.Type == GameCommandType.MoveUnit && command.Path != null && command.Path.Count > 0)
+                .ToList();
+            var movementSteps = resolution.Events.Where(item => item.Type == GameEventType.UnitMoved)
+                .GroupBy(item => item.SourceId)
+                .ToDictionary(group => group.Key, group => Mathf.Max(1, group.First().SecondaryValue));
+            var movementStops = resolution.ManeuverRequests.ToDictionary(item => item.UnitId,
+                item => item.LastValidTileId);
+            var combatEvent = resolution.Events.FirstOrDefault(item => item.Type == GameEventType.CombatResolved);
+            pendingCombatFocusTile = combatEvent == null ? default : combatEvent.TargetId;
+            var blockedRequest = resolution.ManeuverRequests.FirstOrDefault();
+            pendingManeuverFocusTile = blockedRequest == null ? default : blockedRequest.BlockedTileId;
             FocusOwnedCity(activePlayerId);
             if (IsManeuverRecommandPhase())
             {
@@ -672,6 +816,133 @@ namespace LittleCiv.Runtime
                         state.Cities[focusedCityIndex].Id));
                 }
             }
+            if (!state.IsGameOver && resolvedMoveCommands.Count > 0)
+                movementAnimation = StartCoroutine(AnimateResolvedMovement(resolvedMoveCommands, movementStartTiles,
+                    movementStops, movementSteps));
+            else
+                FocusCameraOnTile(pendingCombatFocusTile.IsValid ? pendingCombatFocusTile : pendingManeuverFocusTile);
+        }
+
+        private IEnumerator AnimateResolvedMovement(List<GameCommand> commands,
+            Dictionary<GameEntityId, GameEntityId> movementStartTiles,
+            Dictionary<GameEntityId, GameEntityId> movementStops,
+            Dictionary<GameEntityId, int> movementSteps)
+        {
+            animatedUnitIds.Clear();
+            var plans = new List<MovementAnimationPlan>();
+            for (var commandIndex = 0; commandIndex < commands.Count; commandIndex++)
+            {
+                var command = commands[commandIndex];
+                var unit = state.Units.Find(item => item.Id == command.SubjectId);
+                if (unit == null) continue;
+                var points = new List<GameEntityId>();
+                if (movementStartTiles.TryGetValue(unit.Id, out var startTile)) points.Add(startTile);
+                var path = command.Path;
+                if (movementStops.TryGetValue(unit.Id, out var stopTile))
+                {
+                    var stopIndex = path.IndexOf(stopTile);
+                    path = stopIndex >= 0 ? path.Take(stopIndex + 1).ToList() : new List<GameEntityId> { stopTile };
+                }
+                else if (movementSteps.TryGetValue(unit.Id, out var steps) && steps < path.Count)
+                    path = path.Take(steps).ToList();
+                points.AddRange(path);
+                var worldPoints = points.Where(pathId => visibleTilePositions.ContainsKey(pathId))
+                    .Select(pathId => visibleTilePositions[pathId] + (Vector3.up * 0.62f)).ToList();
+                if (worldPoints.Count < 2) continue;
+                animatedUnitIds.Add(unit.Id);
+                var direction = worldPoints[worldPoints.Count - 1] - worldPoints[0];
+                direction.y = 0f;
+                direction = direction.sqrMagnitude < 0.001f ? Vector3.right : direction.normalized;
+                var slot = (plans.Count % 3) - 1;
+                plans.Add(new MovementAnimationPlan
+                {
+                    Unit = unit,
+                    Points = worldPoints,
+                    Offset = new Vector3(-direction.z, 0f, direction.x) * (slot * 0.22f)
+                });
+            }
+            if (plans.Count == 0)
+            {
+                animatedUnitIds.Clear();
+                yield break;
+            }
+
+            // Rebuild without moving units, then animate each resolved path for one second.
+            ShowCities(new[] { state.Cities[focusedCityIndex].Id });
+            var tokens = new List<GameObject>();
+            for (var planIndex = 0; planIndex < plans.Count; planIndex++)
+            {
+                var token = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+                token.name = $"Moving {plans[planIndex].Unit.Type} [{plans[planIndex].Unit.Id}]";
+                token.transform.position = plans[planIndex].Points[0];
+                token.transform.localScale = new Vector3(0.32f, 0.14f, 0.32f);
+                token.GetComponent<MeshRenderer>().sharedMaterial = ResolveUnitMaterial(plans[planIndex].Unit);
+                CreateUnitBadge(token.transform, plans[planIndex].Unit);
+                tokens.Add(token);
+            }
+
+            var elapsed = 0f;
+            while (elapsed < 1f)
+            {
+                var progress = Mathf.Clamp01(elapsed);
+                for (var planIndex = 0; planIndex < plans.Count; planIndex++)
+                tokens[planIndex].transform.position = PositionAlongPath(plans[planIndex].Points, progress) +
+                    plans[planIndex].Offset;
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            for (var planIndex = 0; planIndex < plans.Count; planIndex++)
+                if (tokens[planIndex] != null) Destroy(tokens[planIndex]);
+            var focusTile = pendingCombatFocusTile.IsValid ? pendingCombatFocusTile : pendingManeuverFocusTile;
+            if (pendingCombatFocusTile.IsValid) yield return AnimateCombatMarker(pendingCombatFocusTile);
+            animatedUnitIds.Clear();
+            movementAnimation = null;
+            ShowCities(new[] { state.Cities[focusedCityIndex].Id });
+            FocusCameraOnTile(focusTile);
+        }
+
+        private IEnumerator AnimateCombatMarker(GameEntityId tileId)
+        {
+            if (!visibleTilePositions.TryGetValue(tileId, out var world)) yield break;
+            var marker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+            marker.name = $"Combat marker [{tileId}]";
+            marker.transform.position = world + (Vector3.up * 0.48f);
+            marker.transform.localScale = new Vector3(0.35f, 0.04f, 0.35f);
+            marker.GetComponent<MeshRenderer>().sharedMaterial = CreateMaterial(new Color(0.95f, 0.18f, 0.12f));
+            var elapsed = 0f;
+            while (elapsed < 0.45f)
+            {
+                var pulse = 0.35f + (Mathf.Sin(elapsed * 28f) * 0.12f);
+                marker.transform.localScale = new Vector3(pulse, 0.04f, pulse);
+                elapsed += Time.deltaTime;
+                yield return null;
+            }
+            Destroy(marker);
+        }
+
+        private void FocusCameraOnTile(GameEntityId tileId)
+        {
+            if (!tileId.IsValid || !visibleTilePositions.TryGetValue(tileId, out var world)) return;
+            var camera = Camera.main;
+            if (camera == null) return;
+            camera.transform.position = new Vector3(world.x, camera.transform.position.y, world.z);
+            statusMessage = $"충돌·전투 위치에 초점을 맞췄습니다. 타일 {tileId}";
+        }
+
+        private sealed class MovementAnimationPlan
+        {
+            public UnitState Unit;
+            public List<Vector3> Points;
+            public Vector3 Offset;
+        }
+
+        private static Vector3 PositionAlongPath(List<Vector3> points, float progress)
+        {
+            if (points == null || points.Count == 0) return Vector3.zero;
+            if (points.Count == 1) return points[0];
+            var scaled = progress * (points.Count - 1);
+            var index = Mathf.Min(points.Count - 2, Mathf.FloorToInt(scaled));
+            return Vector3.Lerp(points[index], points[index + 1], scaled - index);
         }
 
         private void ConfigurePlanningPlayers()
@@ -805,6 +1076,37 @@ namespace LittleCiv.Runtime
             GroundFoodResolver.ReconcileVacatedOwnership(state);
         }
 
+        private void PullThroughWinningAttackers(TurnResolution resolution)
+        {
+            var combats = resolution.Events.Where(item => item.Type == GameEventType.CombatResolved).ToList();
+            for (var combatIndex = 0; combatIndex < combats.Count; combatIndex++)
+            {
+                var combat = combats[combatIndex];
+                var leadCommand = resolution.Commands.Find(item => item.SubjectId == combat.SourceId &&
+                    item.Type == GameCommandType.MoveUnit);
+                if (leadCommand == null) continue;
+                var attacker = state.Units.Find(item => item.Id == combat.SourceId);
+                if (attacker == null || HasEnemyUnit(attacker, combat.TargetId)) continue;
+                var moved = 0;
+                for (var commandIndex = 0; commandIndex < resolution.Commands.Count; commandIndex++)
+                {
+                    var command = resolution.Commands[commandIndex];
+                    if (command.Type != GameCommandType.MoveUnit || command.PlayerId != leadCommand.PlayerId ||
+                        command.Path == null || command.Path.Count == 0 ||
+                        command.Path[command.Path.Count - 1] != combat.TargetId) continue;
+                    var unit = state.Units.Find(item => item.Id == command.SubjectId);
+                    if (unit == null || unit.OwnerId != attacker.OwnerId || unit.TileId == combat.TargetId) continue;
+                    unit.TileId = combat.TargetId;
+                    unit.RemainingMovement = 0;
+                    unit.HasAutomaticDefense = false;
+                    moved++;
+                }
+                if (moved > 0)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 돌파 합류: 같은 목표를 공격한 {moved}부대가 " +
+                                 $"타일 {combat.TargetId}로 함께 진입");
+            }
+        }
+
         private void FinalizeConquestAfterManeuverCombat(TurnResolution resolution)
         {
             if (state.IsGameOver)
@@ -871,8 +1173,8 @@ namespace LittleCiv.Runtime
 
         private void AddCombatLog(string message)
         {
-            combatLog.Insert(0, message);
-            if (combatLog.Count > 2000) combatLog.RemoveAt(combatLog.Count - 1);
+            combatLog.Add(message);
+            if (combatLog.Count > 2000) combatLog.RemoveAt(0);
         }
 
         private void AppendAiTurnDiagnostics(TurnResolution resolution)
@@ -1645,12 +1947,7 @@ namespace LittleCiv.Runtime
 
         private void ShowCities(IEnumerable<GameEntityId> cityIds)
         {
-            foreach (var view in spawnedViews)
-            {
-                Destroy(view);
-            }
-            spawnedViews.Clear();
-            visibleTilePositions.Clear();
+            ClearMapViews();
 
             var ids = state.Cities.Select(city => city.Id).OrderBy(id => id.Value).ToList();
             var positions = new List<Vector3>();
@@ -1886,7 +2183,7 @@ namespace LittleCiv.Runtime
 
         private void CreateUnitsOnTile(Transform tileTransform, GameEntityId tileId)
         {
-            var units = state.Units.FindAll(unit => unit.TileId == tileId);
+            var units = state.Units.FindAll(unit => unit.TileId == tileId && !animatedUnitIds.Contains(unit.Id));
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
             for (var index = 0; index < units.Count; index++)
             {
@@ -1897,7 +2194,86 @@ namespace LittleCiv.Runtime
                 unitObject.transform.localPosition = new Vector3((index - ((units.Count - 1) * 0.5f)) * 0.32f, 0.14f, 0f);
                 unitObject.transform.localScale = new Vector3(0.26f, 0.12f, 0.26f);
                 unitObject.GetComponent<MeshRenderer>().sharedMaterial = ResolveUnitMaterial(unit);
+                CreateUnitBadge(unitObject.transform, unit);
                 unitObject.AddComponent<PrototypeUnitView>().Initialize(this, unit);
+            }
+        }
+
+        private void CreateUnitBadge(Transform unitTransform, UnitState unit)
+        {
+            var badge = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            badge.name = $"Unit badge {unit.Type}";
+            badge.transform.SetParent(unitTransform, false);
+            badge.transform.localPosition = new Vector3(0f, 1.1f, 0f);
+            badge.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
+            badge.transform.localScale = Vector3.one * 1.8f;
+            var collider = badge.GetComponent<Collider>();
+            if (collider != null) Destroy(collider);
+            var renderer = badge.GetComponent<MeshRenderer>();
+            renderer.sharedMaterial = CreateBadgeMaterial(unit.Type, UnitOwnerColor(unit));
+        }
+
+        private Color UnitOwnerColor(UnitState unit)
+        {
+            var owner = FindPlayer(unit.OwnerId);
+            if (owner == null || owner.Slot == PlayerSlot.Neutral) return ResolveUnitMaterial(unit).color;
+            return owner.Slot == PlayerSlot.PlayerOne
+                ? new Color(0.18f, 0.45f, 0.95f)
+                : new Color(0.92f, 0.23f, 0.20f);
+        }
+
+        private Material CreateBadgeMaterial(UnitType type, Color ownerColor)
+        {
+            var shader = Shader.Find("Unlit/Transparent") ?? Shader.Find("Unlit/Texture");
+            var material = new Material(shader ?? Resources.Load<Shader>("PrototypeUnlit"));
+            material.mainTexture = CreateUnitBadgeTexture(type, ownerColor);
+            material.color = Color.white;
+            return material;
+        }
+
+        private static Texture2D CreateUnitBadgeTexture(UnitType type, Color ownerColor)
+        {
+            const int size = 32;
+            var texture = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            texture.filterMode = FilterMode.Point;
+            var pixels = new Color[size * size];
+            for (var i = 0; i < pixels.Length; i++) pixels[i] = Color.clear;
+            var accent = new Color(1f, 0.88f, 0.35f, 1f);
+            for (var y = 3; y < 29; y++)
+            for (var x = 3; x < 29; x++)
+            {
+                var dx = x - 16;
+                var dy = y - 16;
+                var inCircle = dx * dx + dy * dy <= 13 * 13;
+                if (!inCircle) continue;
+                pixels[(y * size) + x] = ownerColor;
+                var mark = BadgeMark(type, x, y);
+                if (mark) pixels[(y * size) + x] = accent;
+            }
+            texture.SetPixels(pixels);
+            texture.Apply();
+            return texture;
+        }
+
+        private static bool BadgeMark(UnitType type, int x, int y)
+        {
+            var dx = x - 16;
+            var dy = y - 16;
+            switch (type)
+            {
+                case UnitType.Militia: return Mathf.Abs(dx) <= 2 && Mathf.Abs(dy) <= 9 ||
+                    Mathf.Abs(dy) <= 2 && Mathf.Abs(dx) <= 8;
+                case UnitType.IronInfantry: return Mathf.Abs(dx) <= 8 && Mathf.Abs(dy) <= 2 ||
+                    Mathf.Abs(dx + dy) <= 2 && Mathf.Abs(dx) <= 8;
+                case UnitType.GunpowderInfantry: return Mathf.Abs(dy + 5) <= 2 && Mathf.Abs(dx) <= 8 ||
+                    Mathf.Abs(dx - 5) <= 2 && Mathf.Abs(dy) <= 8;
+                case UnitType.MechanizedInfantry: return Mathf.Abs(dx) <= 7 && Mathf.Abs(dy) <= 5 ||
+                    (Mathf.Abs(dx) >= 7 && Mathf.Abs(dy) >= 7);
+                case UnitType.Supply: return Mathf.Abs(dx) <= 8 && Mathf.Abs(dy) <= 8 &&
+                    (Mathf.Abs(dx) <= 2 || Mathf.Abs(dy) <= 2);
+                case UnitType.MotorizedSupply: return Mathf.Abs(dy) <= 5 && Mathf.Abs(dx) <= 9 ||
+                    (Mathf.Abs(dx) <= 2 && Mathf.Abs(dy) >= 5);
+                default: return false;
             }
         }
 
@@ -1928,6 +2304,9 @@ namespace LittleCiv.Runtime
 
         private Material ResolveMaterial(CityTilePlacement placement, TileState tile)
         {
+            var district = state.Districts.Find(item => item.TileId == tile.Id);
+            if (district != null && district.IsPillaged)
+                return ResolvePillagedDistrictMaterial(district);
             if (tile.Id == selectedTileId)
             {
                 return selectedMaterial;
@@ -1936,7 +2315,6 @@ namespace LittleCiv.Runtime
             {
                 return constructionMaterial;
             }
-            var district = state.Districts.Find(item => item.TileId == tile.Id);
             if (district != null)
             {
                 if (district.RemainingConstructionTurns > 0) return constructionMaterial;
@@ -1952,6 +2330,26 @@ namespace LittleCiv.Runtime
                 }
             }
             return placement.IsBuildable ? buildableMaterial : boundaryMaterial;
+        }
+
+        private Material ResolvePillagedDistrictMaterial(DistrictState district)
+        {
+            if (pillagedDistrictMaterials.TryGetValue(district.Id, out var cached)) return cached;
+            Material source;
+            switch (district.Type)
+            {
+                case DistrictType.Government: source = governmentMaterial; break;
+                case DistrictType.Agriculture: source = agricultureMaterial; break;
+                case DistrictType.Commerce: source = commerceMaterial; break;
+                case DistrictType.Science: source = scienceMaterial; break;
+                case DistrictType.Culture: source = cultureMaterial; break;
+                case DistrictType.Military: source = militaryMaterial; break;
+                case DistrictType.NuclearFacility: source = modernDefenseMaterial; break;
+                default: source = boundaryMaterial; break;
+            }
+            cached = new Material(source) { color = Color.Lerp(source.color, Color.gray, 0.72f) };
+            pillagedDistrictMaterials[district.Id] = cached;
+            return cached;
         }
 
         private static Vector3 AxialToWorld(HexCoord coord)
@@ -2067,19 +2465,115 @@ namespace LittleCiv.Runtime
 
         private void OnGUI()
         {
-            if (state == null)
-            {
-                return;
-            }
-
             var previousGuiMatrix = GUI.matrix;
             GUI.matrix = Matrix4x4.Scale(new Vector3(UiScale, UiScale, 1f));
+            try
+            {
+                if (frontEndPage != FrontEndPage.InGame || state == null)
+                {
+                    DrawFrontEnd();
+                    return;
+                }
 
-            DrawRouteTurnMarkers();
+                if (state.IsGameOver)
+                {
+                    DrawMatchResult();
+                    return;
+                }
 
+                DrawRouteTurnMarkers();
+                DrawTopHud();
+                // A menu or restart button may replace the current match during this GUI event.
+                if (state == null) return;
+                if (showCityDetails) DrawCityManagementPanel();
+                if (!HasManagementPanel) DrawSelectedTilePanel();
+                if (showResearchPanel) DrawResearchPanel();
+                if (showCheatPanel) DrawCheatPanel();
+                if (showNeutralTradePanel) DrawNeutralTradePanel();
+                DrawCombatLog();
+            }
+            finally
+            {
+                GUI.enabled = true;
+                GUI.matrix = previousGuiMatrix;
+            }
+        }
+
+        private void DrawMatchResult()
+        {
+            // Keep the result card visible even in a small editor Game view.
+            var scale = Mathf.Min(UiScale, Mathf.Min(Screen.width / 660f, Screen.height / 560f));
+            GUI.matrix = Matrix4x4.Scale(new Vector3(scale, scale, 1f));
+            var width = Screen.width / scale;
+            var height = Screen.height / scale;
+            var rect = new Rect((width - 620f) * 0.5f, (height - 520f) * 0.5f, 620f, 520f);
+            var previousColor = GUI.color;
+            GUI.color = new Color(0.035f, 0.05f, 0.07f, 0.94f);
+            GUI.DrawTexture(new Rect(0f, 0f, width, height), Texture2D.whiteTexture);
+            GUI.color = previousColor;
+            GUI.Box(rect, string.Empty);
+
+            var winner = FindPlayer(state.WinnerId);
+            var singlePlayer = state.Players.Any(player => player.Slot == PlayerSlot.PlayerTwo &&
+                player.AiStrategy != PlayerAiStrategy.None);
+            var draw = state.Victory == VictoryType.Draw;
+            var won = winner != null && winner.Slot == PlayerSlot.PlayerOne;
+            var title = draw ? "무승부" : singlePlayer ? (won ? "승리" : "패배")
+                : winner == null ? "경기 종료" : $"{PlayerName(winner.Slot)} 승리";
+            var titleStyle = new GUIStyle(GUI.skin.label)
+            { alignment = TextAnchor.MiddleCenter, fontSize = 36, fontStyle = FontStyle.Bold };
+            titleStyle.normal.textColor = draw ? new Color(0.8f, 0.85f, 0.9f)
+                : !singlePlayer || won ? new Color(1f, 0.83f, 0.35f) : new Color(1f, 0.55f, 0.48f);
+            var centered = new GUIStyle(GUI.skin.label)
+            { alignment = TextAnchor.MiddleCenter, wordWrap = true, fontSize = 15 };
+            GUI.Label(new Rect(rect.x + 24f, rect.y + 24f, 572f, 62f), title, titleStyle);
+            GUI.Label(new Rect(rect.x + 24f, rect.y + 92f, 572f, 32f),
+                $"{(matchEndTurn > 0 ? matchEndTurn : state.TurnNumber)}턴 종료 · {VictoryName(state.Victory)}", centered);
+            var explanation = draw ? "양측이 자가학습 AI 연구를 동시에 완료했습니다."
+                : winner == null ? "경기가 종료되었습니다."
+                : state.Victory == VictoryType.Culture ? $"{PlayerName(winner.Slot)}의 문화가 상대 도시 시민의 과반을 차지했습니다."
+                : state.Victory == VictoryType.Conquest ? $"{PlayerName(winner.Slot)}가 상대 정부청사를 함락했습니다."
+                : winner.HasCompletedSelfLearningAI ? $"{PlayerName(winner.Slot)}가 자가학습 AI 연구를 먼저 완료했습니다."
+                : state.Players.Count(player => player.Slot != PlayerSlot.Neutral && player.HasUnlockedSelfLearningAI) == 2
+                    ? $"{PlayerName(winner.Slot)}가 핵을 유일하게 보유하게 되었습니다."
+                    : $"{PlayerName(winner.Slot)}가 핵개발 프로젝트를 먼저 완료했습니다.";
+            GUI.Label(new Rect(rect.x + 32f, rect.y + 132f, 556f, 58f), explanation, centered);
+
+            var players = state.Players.Where(player => player.Slot != PlayerSlot.Neutral)
+                .OrderBy(player => player.Slot).ToList();
+            for (var index = 0; index < players.Count && index < 2; index++)
+            {
+                var player = players[index];
+                var city = state.Cities.Find(item => item.OwnerId == player.Id);
+                var units = state.Units.Count(unit => unit.OwnerId == player.Id);
+                var card = new Rect(rect.x + 24f + index * 290f, rect.y + 208f, 282f, 122f);
+                GUI.Box(card, string.Empty);
+                GUI.Label(new Rect(card.x + 10f, card.y + 10f, 262f, 100f),
+                    $"{PlayerDisplayName(player.Id)}\n" +
+                    (city == null ? "본도시 없음" : $"인구 {city.Population} · 금 {city.Gold} · 식량 {city.StoredFood}") +
+                    $"\n남은 병력 {units}부대 · 완료 연구 {player.CompletedResearch.Count}개", centered);
+            }
+
+            var buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 17 };
+            if (GUI.Button(new Rect(rect.x + 70f, rect.y + 354f, 480f, 48f), "같은 상대와 다시 시작", buttonStyle))
+            {
+                RestartMatch();
+                return;
+            }
+            if (GUI.Button(new Rect(rect.x + 70f, rect.y + 414f, 480f, 42f), "시작 화면으로", buttonStyle))
+            {
+                ReturnToMainMenu();
+                return;
+            }
+            GUI.Label(new Rect(rect.x + 30f, rect.y + 470f, 560f, 28f),
+                "다시 시작하면 새 경기의 1턴부터 진행합니다.", centered);
+        }
+
+        private void DrawCityDetails()
+        {
             var city = state.Cities[focusedCityIndex];
             var economy = CityEconomyResolver.CalculateBreakdown(state, city);
-            GUI.Box(new Rect(16f, 16f, 410f, 505f), string.Empty);
+            GUI.Box(new Rect(16f, 16f, 410f, 308f), string.Empty);
             var cityOwner = FindPlayer(city.OwnerId);
             GUI.Label(new Rect(28f, 25f, 380f, 22f),
                 $"도시 {city.Name} | {(cityOwner == null ? "소유자 미상" : PlayerDisplayName(cityOwner.Id))} | 좌표 ({city.WorldQ}, {city.WorldR})");
@@ -2099,50 +2593,291 @@ namespace LittleCiv.Runtime
             GUI.Label(new Rect(28f, 270f, 380f, 20f), CitizenAssignmentSummary(city));
             GUI.Label(new Rect(28f, 290f, 360f, 20f),
                 $"성장 {city.GrowthProgress}/{economy.GrowthRequired} | 기근 {city.FamineProgress}/{economy.FamineRequired}");
+        }
+
+        private void DrawCityManagementPanel()
+        {
+            var rect = ResearchPanelRect();
+            var city = state.Cities[focusedCityIndex];
+            GUI.Box(rect, string.Empty);
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, 300f, 24f), $"도시 정보·시민 배치 — {city.Name}");
+            if (GUI.Button(new Rect(rect.xMax - 62f, rect.y + 8f, 48f, 28f), "닫기"))
+            { showCityDetails = false; return; }
+            var districts = state.Districts.Where(item => item.CityId == city.Id && item.Type != DistrictType.Government)
+                .OrderBy(item => item.Type).ThenBy(item => item.Id).ToList();
+            cityDetailsScroll = GUI.BeginScrollView(new Rect(rect.x + 4f, rect.y + 44f, rect.width - 8f, rect.height - 52f),
+                cityDetailsScroll, new Rect(0f, 0f, 406f, 420f + districts.Count * 116f));
+            try
+            {
+                DrawCityDetails();
+                GUI.enabled = city.OwnerId == activePlayerId && !state.IsGameOver && !IsManeuverRecommandPhase();
+                if (GUI.Button(new Rect(14f, 330f, 376f, 30f),
+                    $"시민 자동배치: {(IsCitizenAutoAssignmentEnabled(city) ? "켜짐" : "꺼짐")}" +
+                    (plannedCitizenAutomation.ContainsKey(city.Id) ? " (변경 예약)" : string.Empty)))
+                    ToggleCitizenAutoAssignment(city);
+                GUI.enabled = true;
+                GUI.Label(new Rect(14f, 366f, 376f, 44f),
+                    $"자유 시민 {ProjectedFreeCitizens(city)}명 | 정부청사 시민은 유지됩니다.\n자동배치를 끄면 아래 지구별 시민 수를 변경할 수 있습니다.");
+                for (var index = 0; index < districts.Count; index++)
+                {
+                    var district = districts[index];
+                    var y = 420f + index * 116f;
+                    GUI.Label(new Rect(14f, y, 376f, 24f),
+                        $"{DistrictName(district.Type)} · 타일 {district.TileId} · {DistrictStatus(district, city)}");
+                    DrawCitizenAssignmentControls(0f, y + 30f, district, city,
+                        city.OwnerId == activePlayerId && district.ControllerId == activePlayerId);
+                }
+            }
+            finally { GUI.enabled = true; GUI.EndScrollView(); }
+        }
+
+        private void DrawTopHud()
+        {
+            var width = Screen.width / UiScale;
             var active = FindPlayer(activePlayerId);
-            var reCommandCount = state.Units.Count(item =>
-                item.OwnerId == activePlayerId && item.ManeuverRecommandTurn == state.TurnNumber);
-            GUI.Label(new Rect(28f, 317f, 380f, 20f),
-                reCommandCount > 0
-                    ? $"기동 재명령 턴 | {PlayerName(active.Slot)} | 대상 {reCommandCount} | 예약 {simulator.Planning.GetOwnCommands(activePlayerId).Count}"
-                    : $"일반 턴 {state.TurnNumber} | {PlayerName(active.Slot)} | 예약 {simulator.Planning.GetOwnCommands(activePlayerId).Count}");
-            GUI.Label(new Rect(28f, 339f, 380f, 40f), statusMessage);
-            GUI.enabled = !state.IsGameOver;
-            if (GUI.Button(new Rect(28f, 383f, 170f, 30f), "선택 병력 경로 취소")) CancelSelectedMove();
-            GUI.enabled = true;
-            if (GUI.Button(new Rect(210f, 383f, 198f, 30f),
-                    state.IsGameOver ? "1턴부터 다시 시작" : "플레이어 턴 확정"))
+            var home = state.Cities.Find(item => item.OwnerId == activePlayerId);
+            var maneuver = IsManeuverRecommandPhase();
+            var needsResearch = !state.IsGameOver && !maneuver && NeedsResearchSelection(active);
+            var phase = state.IsGameOver ? "경기 종료" : maneuver ? "기동 재명령" : "명령 입력";
+            var count = simulator.Planning.GetOwnCommands(activePlayerId).Count;
+            var textStyle = new GUIStyle(GUI.skin.label) { fontSize = 13 };
+            GUI.Box(new Rect(8f, 8f, width - 16f, 110f), string.Empty);
+            GUI.Label(new Rect(20f, 14f, width - 240f, 24f),
+                $"{state.TurnNumber}턴  |  {PlayerName(active.Slot)}  |  {phase}  |  예약 {count}개", textStyle);
+            plannedResearch.TryGetValue(activePlayerId, out var researchOrder);
+            var currentResearch = researchOrder == null ? active.CurrentResearch : (ResearchType)researchOrder.PrimaryValue;
+            GUI.Label(new Rect(510f, 14f, width - 720f, 24f),
+                currentResearch == ResearchType.None ? "연구: 선택 없음"
+                    : $"연구: {ResearchName(currentResearch)} {ResearchResolver.Progress(active, currentResearch)}/{ResearchRules.Cost(currentResearch)}" +
+                      (researchOrder == null ? string.Empty : " (예약)"), textStyle);
+
+            GUI.enabled = state.IsGameOver || (!needsResearch && movementAnimation == null);
+            if (GUI.Button(new Rect(width - 192f, 14f, 172f, 28f),
+                state.IsGameOver ? "1턴부터 다시 시작" : maneuver ? "기동 재명령 확정" : "턴 종료"))
             {
                 if (state.IsGameOver) RestartMatch();
                 else ConfirmActivePlayer();
+                return;
             }
             GUI.enabled = true;
-            if (GUI.Button(new Rect(28f, 418f, 116f, 30f),
-                showResearchPanel ? "연구 닫기" : "연구 열기"))
+
+            if (home != null)
+            {
+                var economy = CityEconomyResolver.CalculateBreakdown(state, home);
+                var cellWidth = (width - 40f) / 4f;
+                var goldNet = economy.Gold.Total - economy.UnitUpkeep - economy.FacilityUpkeep;
+                GUI.Label(new Rect(20f, 42f, cellWidth, 24f),
+                    $"식량 {home.StoredFood}  ({Signed(economy.FoodNet)}/턴)", textStyle);
+                GUI.Label(new Rect(20f + cellWidth, 42f, cellWidth, 24f),
+                    $"금 {home.Gold}  ({Signed(goldNet)}/턴)", textStyle);
+                GUI.Label(new Rect(20f + cellWidth * 2f, 42f, cellWidth, 24f),
+                    $"과학 +{economy.Science.Total}/턴", textStyle);
+                GUI.Label(new Rect(20f + cellWidth * 3f, 42f, cellWidth, 24f),
+                    $"문화 {economy.Culture.Total}/턴", textStyle);
+            }
+
+            if (GUI.Button(new Rect(20f, 76f, 78f, 28f), "도시 정보"))
+            {
+                showCityDetails = !showCityDetails;
+                showResearchPanel = showCheatPanel = showNeutralTradePanel = false;
+            }
+            if (GUI.Button(new Rect(104f, 76f, 66f, 28f), "연구"))
             {
                 showResearchPanel = !showResearchPanel;
-                if (showResearchPanel) { showCheatPanel = false; showNeutralTradePanel = false; }
+                showCityDetails = showCheatPanel = showNeutralTradePanel = false;
+                if (showResearchPanel) focusedCityIndex = state.Cities.FindIndex(item => item.OwnerId == activePlayerId);
             }
-            if (GUI.Button(new Rect(154f, 418f, 116f, 30f),
-                showCheatPanel ? "치트 닫기" : "치트 열기"))
-            {
-                showCheatPanel = !showCheatPanel;
-                if (showCheatPanel) { showResearchPanel = false; showNeutralTradePanel = false; }
-            }
-            if (GUI.Button(new Rect(280f, 418f, 128f, 30f),
-                showNeutralTradePanel ? "교역 닫기" : "중립 교역"))
+            if (GUI.Button(new Rect(176f, 76f, 78f, 28f), "중립 교역"))
             {
                 showNeutralTradePanel = !showNeutralTradePanel;
-                if (showNeutralTradePanel) { showResearchPanel = false; showCheatPanel = false; }
+                showCityDetails = showResearchPanel = showCheatPanel = false;
             }
-            GUI.Label(new Rect(28f, 453f, 380f, 20f), "좌클릭: 선택 | 우클릭: 이동 | WASD: 화면 이동 | 휠: 확대/축소");
-            if (turnLog.Count > 0) GUI.Label(new Rect(28f, 477f, 380f, 20f), turnLog[0]);
-            DrawSelectedTilePanel();
-            if (showResearchPanel) DrawResearchPanel();
-            if (showCheatPanel) DrawCheatPanel();
-            if (showNeutralTradePanel) DrawNeutralTradePanel();
-            DrawCombatLog();
-            GUI.matrix = previousGuiMatrix;
+            if (GUI.Button(new Rect(260f, 76f, 58f, 28f), "치트"))
+            {
+                showCheatPanel = !showCheatPanel;
+                showCityDetails = showResearchPanel = showNeutralTradePanel = false;
+            }
+            GUI.enabled = !state.IsGameOver && selectedUnitId.IsValid;
+            if (GUI.Button(new Rect(324f, 76f, 78f, 28f), "경로 취소")) CancelSelectedMove();
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(408f, 76f, 78f, 28f), "시작 화면"))
+            {
+                ReturnToMainMenu();
+                return;
+            }
+            var reason = state.IsGameOver ? "경기가 종료되었습니다."
+                : needsResearch ? "연구를 선택해야 턴을 종료할 수 있습니다."
+                : maneuver ? "남은 이동력으로 재명령 후 확정하세요." : "턴 종료 가능";
+            var previousColor = GUI.color;
+            if (needsResearch) GUI.color = new Color(1f, 0.75f, 0.3f);
+            GUI.Label(new Rect(496f, 78f, Mathf.Max(0f, width - 514f), 26f), reason);
+            GUI.color = previousColor;
+            var freeCitizens = home == null ? 0 : ProjectedFreeCitizens(home);
+            if (freeCitizens > 0)
+            {
+                GUI.color = new Color(1f, 0.78f, 0.3f);
+                if (GUI.Button(new Rect(width - 310f, 120f, 290f, 30f), $"미배정 시민 {freeCitizens}명 — 배치 확인"))
+                {
+                    CloseManagementPanels();
+                    focusedCityIndex = state.Cities.IndexOf(home);
+                    showCityDetails = true;
+                }
+                GUI.color = previousColor;
+            }
+            GUI.Label(new Rect(20f, 120f, width - (freeCitizens > 0 ? 344f : 40f), 32f), statusMessage,
+                new GUIStyle(GUI.skin.label) { wordWrap = true });
+        }
+
+        private void DrawFrontEnd()
+        {
+            var logicalWidth = Screen.width / UiScale;
+            var logicalHeight = Screen.height / UiScale;
+            var panelWidth = Mathf.Min(620f, Mathf.Max(460f, logicalWidth - 48f));
+            var panelHeight = 500f;
+            var panel = new Rect((logicalWidth - panelWidth) * 0.5f,
+                Mathf.Max(20f, (logicalHeight - panelHeight) * 0.5f), panelWidth, panelHeight);
+
+            GUI.Box(new Rect(0f, 0f, logicalWidth, logicalHeight), string.Empty);
+            GUI.Box(panel, string.Empty);
+
+            var titleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 30,
+                fontStyle = FontStyle.Bold
+            };
+            var subtitleStyle = new GUIStyle(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = 15,
+                wordWrap = true
+            };
+            var buttonStyle = new GUIStyle(GUI.skin.button) { fontSize = 17 };
+            var smallButtonStyle = new GUIStyle(GUI.skin.button) { fontSize = 14 };
+
+            GUI.Label(new Rect(panel.x + 20f, panel.y + 25f, panel.width - 40f, 48f),
+                "리틀 시빌라이제이션", titleStyle);
+            GUI.Label(new Rect(panel.x + 30f, panel.y + 72f, panel.width - 60f, 48f),
+                "하나의 도시를 성장시키고, 과학·문화·정복 중 하나의 길로 승리하세요.", subtitleStyle);
+
+            switch (frontEndPage)
+            {
+                case FrontEndPage.Main:
+                    DrawMainMenu(panel, buttonStyle);
+                    break;
+                case FrontEndPage.SinglePlayer:
+                    DrawSinglePlayerSetup(panel, buttonStyle, smallButtonStyle);
+                    break;
+                case FrontEndPage.OnlineHost:
+                    DrawOnlineHostSetup(panel, buttonStyle, smallButtonStyle, subtitleStyle);
+                    break;
+                case FrontEndPage.OnlineJoin:
+                    DrawOnlineJoinSetup(panel, buttonStyle, smallButtonStyle, subtitleStyle);
+                    break;
+            }
+
+            GUI.Label(new Rect(panel.x + 30f, panel.yMax - 62f, panel.width - 60f, 34f),
+                frontEndMessage, subtitleStyle);
+            GUI.Label(new Rect(panel.x + 30f, panel.yMax - 28f, panel.width - 60f, 20f),
+                "포트폴리오 프로토타입", subtitleStyle);
+        }
+
+        private void DrawMainMenu(Rect panel, GUIStyle buttonStyle)
+        {
+            var buttonWidth = Mathf.Min(360f, panel.width - 100f);
+            var x = panel.center.x - (buttonWidth * 0.5f);
+            if (GUI.Button(new Rect(x, panel.y + 145f, buttonWidth, 48f), "싱글플레이", buttonStyle))
+            {
+                frontEndPage = FrontEndPage.SinglePlayer;
+                frontEndMessage = "상대 AI 유형을 선택한 뒤 경기를 시작하세요.";
+            }
+            if (GUI.Button(new Rect(x, panel.y + 203f, buttonWidth, 48f), "온라인 방 생성", buttonStyle))
+            {
+                frontEndPage = FrontEndPage.OnlineHost;
+                frontEndMessage = "온라인 대전은 준비 중입니다.";
+            }
+            if (GUI.Button(new Rect(x, panel.y + 261f, buttonWidth, 48f), "온라인 방 참가", buttonStyle))
+            {
+                frontEndPage = FrontEndPage.OnlineJoin;
+                frontEndMessage = "방 코드 입력 화면입니다. 온라인 접속은 준비 중입니다.";
+            }
+            if (GUI.Button(new Rect(x, panel.y + 319f, buttonWidth, 48f), "종료", buttonStyle))
+            {
+                frontEndMessage = Application.isEditor
+                    ? "에디터에서는 플레이 모드 정지 버튼으로 종료하세요."
+                    : "게임을 종료합니다.";
+                Application.Quit();
+            }
+        }
+
+        private void DrawSinglePlayerSetup(Rect panel, GUIStyle buttonStyle, GUIStyle smallButtonStyle)
+        {
+            GUI.Label(new Rect(panel.x + 60f, panel.y + 132f, panel.width - 120f, 28f),
+                $"상대 AI: {AiStrategyName(opponentAiStrategy)}");
+            var optionWidth = (panel.width - 140f) / 3f;
+            var optionX = panel.x + 60f;
+            DrawAiOption(new Rect(optionX, panel.y + 170f, optionWidth, 42f), PlayerAiStrategy.Science,
+                "과학형", smallButtonStyle);
+            DrawAiOption(new Rect(optionX + optionWidth + 10f, panel.y + 170f, optionWidth, 42f),
+                PlayerAiStrategy.Culture, "문화형", smallButtonStyle);
+            DrawAiOption(new Rect(optionX + ((optionWidth + 10f) * 2f), panel.y + 170f, optionWidth, 42f),
+                PlayerAiStrategy.Conquest, "정복형", smallButtonStyle);
+
+            var buttonWidth = Mathf.Min(360f, panel.width - 100f);
+            var x = panel.center.x - (buttonWidth * 0.5f);
+            if (GUI.Button(new Rect(x, panel.y + 245f, buttonWidth, 52f), "경기 시작", buttonStyle))
+                RestartMatch();
+            if (GUI.Button(new Rect(x, panel.y + 309f, buttonWidth, 42f), "뒤로", smallButtonStyle))
+            {
+                frontEndPage = FrontEndPage.Main;
+                frontEndMessage = "플레이할 방식을 선택하세요.";
+            }
+        }
+
+        private void DrawAiOption(Rect rect, PlayerAiStrategy strategy, string label, GUIStyle style)
+        {
+            var previousColor = GUI.color;
+            if (opponentAiStrategy == strategy) GUI.color = new Color(0.55f, 0.9f, 1f);
+            if (GUI.Button(rect, opponentAiStrategy == strategy ? $"✓ {label}" : label, style))
+            {
+                opponentAiStrategy = strategy;
+                frontEndMessage = $"{label} AI를 선택했습니다.";
+            }
+            GUI.color = previousColor;
+        }
+
+        private void DrawOnlineHostSetup(Rect panel, GUIStyle buttonStyle, GUIStyle smallButtonStyle,
+            GUIStyle textStyle)
+        {
+            GUI.Label(new Rect(panel.x + 60f, panel.y + 140f, panel.width - 120f, 60f),
+                "온라인 대전을 준비 중입니다. 연결 기능이 완성되면 방을 만들고 초대 코드를 공유할 수 있습니다.", textStyle);
+            GUI.enabled = false;
+            GUI.Button(new Rect(panel.center.x - 180f, panel.y + 225f, 360f, 52f),
+                "방 만들기 — 준비 중", buttonStyle);
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(panel.center.x - 180f, panel.y + 295f, 360f, 42f), "뒤로", smallButtonStyle))
+            {
+                frontEndPage = FrontEndPage.Main;
+                frontEndMessage = "플레이할 방식을 선택하세요.";
+            }
+        }
+
+        private void DrawOnlineJoinSetup(Rect panel, GUIStyle buttonStyle, GUIStyle smallButtonStyle,
+            GUIStyle textStyle)
+        {
+            GUI.Label(new Rect(panel.x + 60f, panel.y + 132f, panel.width - 120f, 28f),
+                "방 코드", textStyle);
+            onlineRoomCode = GUI.TextField(new Rect(panel.center.x - 180f, panel.y + 170f, 360f, 42f),
+                onlineRoomCode, 24).Trim().ToUpperInvariant();
+            GUI.enabled = false;
+            GUI.Button(new Rect(panel.center.x - 180f, panel.y + 230f, 360f, 52f),
+                "방 참가 — 준비 중", buttonStyle);
+            GUI.enabled = true;
+            if (GUI.Button(new Rect(panel.center.x - 180f, panel.y + 300f, 360f, 42f), "뒤로", smallButtonStyle))
+            {
+                frontEndPage = FrontEndPage.Main;
+                frontEndMessage = "플레이할 방식을 선택하세요.";
+            }
         }
 
         private void DrawCultureStatus(CityState city, float x, float y)
@@ -2185,13 +2920,13 @@ namespace LittleCiv.Runtime
             {
                 var turns = EstimateCultureResultTurns(attackerCity, city, attacker.Id, owner.Id, cultureGap);
                 GUI.Label(new Rect(x, y + 44f, 380f, 20f),
-                    $"문화 방어: 상대문화 {foreign}/{defeatAt} | 약 {turns}턴 후 패배");
+                    $"문화 방어: {(turns >= 999 ? "999턴 내 패배 없음" : $"약 {turns}턴 후 패배")} (현재 생산·인구 유지 시)");
             }
             else if (cultureGap < 0)
             {
                 var turns = EstimateCultureResultTurns(city, attackerCity, owner.Id, attacker.Id, -cultureGap);
                 GUI.Label(new Rect(x, y + 44f, 380f, 20f),
-                    $"문화 공세: 약 {turns}턴 후 승리");
+                    $"문화 공세: {(turns >= 999 ? "999턴 내 승리 없음" : $"약 {turns}턴 후 승리")} (현재 생산·인구 유지 시)");
             }
             else GUI.Label(new Rect(x, y + 44f, 380f, 20f),
                 $"문화 방어: 상대문화 {foreign}/{defeatAt} | 현재 변화 없음");
@@ -2265,15 +3000,22 @@ namespace LittleCiv.Runtime
 
         private Rect ResearchPanelRect()
         {
-            var logicalWidth = Screen.width / UiScale;
-            return logicalWidth < 900f
-                ? new Rect(16f, 16f, 414f, 600f)
-                : new Rect(Mathf.Max(440f, logicalWidth - 844f), 16f, 414f, 600f);
+            return SelectionPanelRect();
         }
 
         private void DrawResearchPanel()
         {
             var rect = ResearchPanelRect();
+            GUI.Box(rect, string.Empty);
+            researchScroll = GUI.BeginScrollView(new Rect(rect.x + 2f, rect.y + 2f, rect.width - 4f, rect.height - 4f),
+                researchScroll, new Rect(0f, 0f, 414f, 690f));
+            try { DrawResearchPanelContent(); }
+            finally { GUI.enabled = true; GUI.EndScrollView(); }
+        }
+
+        private void DrawResearchPanelContent()
+        {
+            var rect = new Rect(0f, 0f, 414f, 690f);
             GUI.Box(rect, string.Empty);
             var focusedCity = state.Cities[focusedCityIndex];
             var focusedOwner = FindPlayer(focusedCity.OwnerId);
@@ -2299,20 +3041,18 @@ namespace LittleCiv.Runtime
             var completedText = player.CompletedResearch == null || player.CompletedResearch.Count == 0
                 ? "없음"
                 : string.Join(", ", player.CompletedResearch.OrderBy(item => (int)item).Select(ResearchName));
-            GUI.Label(new Rect(rect.x + 14f, rect.y + 62f, 380f, 42f),
-                $"완료 연구: {completedText}");
-            GUI.Label(new Rect(rect.x + 14f, rect.y + 86f, 380f, 42f),
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 62f, 380f, 78f),
+                $"완료 연구: {completedText}", new GUIStyle(GUI.skin.label) { wordWrap = true });
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 144f, 380f, 42f),
                 shownResearch == ResearchType.None
                     ? "효과: 연구를 선택하면 완료 효과가 표시됩니다."
                     : $"효과: {ResearchEffectDescription(shownResearch)}");
             GUI.enabled = player.Id == activePlayerId;
-            if (planned != null && GUI.Button(new Rect(rect.x + 14f, rect.y + 104f, 376f, 28f),
+            if (planned != null && GUI.Button(new Rect(rect.x + 14f, rect.y + 190f, 376f, 28f),
                 "연구 변경 예약 취소"))
                 CancelResearchReservation();
             GUI.enabled = true;
-            var viewport = new Rect(rect.x + 8f, rect.y + 140f, rect.width - 16f, rect.height - 150f);
-            var content = new Rect(0f, 0f, 378f, 410f);
-            researchScroll = GUI.BeginScrollView(viewport, researchScroll, content);
+            GUI.BeginGroup(new Rect(8f, 232f, 398f, 440f));
             var types = System.Enum.GetValues(typeof(ResearchType)).Cast<ResearchType>()
                 .Where(item => item != ResearchType.None).OrderBy(item => (int)item).ToList();
             for (var index = 0; index < types.Count; index++)
@@ -2335,12 +3075,22 @@ namespace LittleCiv.Runtime
                     ReserveResearch(type);
             }
             GUI.enabled = true;
-            GUI.EndScrollView();
+            GUI.EndGroup();
         }
 
         private void DrawCheatPanel()
         {
             var rect = ResearchPanelRect();
+            GUI.Box(rect, string.Empty);
+            cheatScroll = GUI.BeginScrollView(new Rect(rect.x + 2f, rect.y + 2f, rect.width - 4f, rect.height - 4f),
+                cheatScroll, new Rect(0f, 0f, 414f, 400f));
+            try { DrawCheatPanelContent(); }
+            finally { GUI.enabled = true; GUI.EndScrollView(); }
+        }
+
+        private void DrawCheatPanelContent()
+        {
+            var rect = new Rect(0f, 0f, 414f, 400f);
             GUI.Box(rect, string.Empty);
             var city = state.Cities[focusedCityIndex];
             GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, 280f, 24f), $"테스트 치트 — {city.Name}");
@@ -2428,18 +3178,58 @@ namespace LittleCiv.Runtime
         private void DrawCombatLog()
         {
             if (combatLog.Count == 0) return;
-            var logicalHeight = Screen.height / UiScale;
-            const float height = 166f;
-            var y = Mathf.Max(526f, logicalHeight - height - 16f);
-            GUI.Box(new Rect(16f, y, 700f, height), string.Empty);
-            GUI.Label(new Rect(28f, y + 8f, 660f, 22f), "게임/AI 진단 기록");
-            var viewport = new Rect(24f, y + 30f, 684f, 128f);
-            var contentHeight = Mathf.Max(viewport.height, combatLog.Count * 22f);
+            var rect = CombatLogRect();
+            GUI.Box(rect, string.Empty);
+            GUI.Label(new Rect(rect.x + 10f, rect.y + 6f, 150f, 24f), $"턴 기록 · {combatLog.Count}건");
+            if (GUI.Button(new Rect(rect.xMax - 58f, rect.y + 4f, 48f, 25f), logCollapsed ? "펼침" : "접기"))
+                logCollapsed = !logCollapsed;
+            if (logCollapsed) return;
+            var nextFilter = GUI.Toolbar(new Rect(rect.x + 8f, rect.y + 34f, rect.width - 16f, 26f),
+                logFilter, new[] { "핵심 결과", "AI 진단", "전체" });
+            if (nextFilter != logFilter)
+            {
+                logFilter = nextFilter;
+                combatLogScroll = Vector2.zero;
+                followLatestLog = true;
+            }
+            followLatestLog = GUI.Toggle(new Rect(rect.x + 10f, rect.y + 66f, 146f, 24f),
+                followLatestLog, "최신 기록 자동 따라가기");
+            if (GUI.Button(new Rect(rect.xMax - 82f, rect.y + 64f, 72f, 25f), "최신으로"))
+                followLatestLog = true;
+            var viewport = new Rect(rect.x + 8f, rect.y + 96f, rect.width - 16f, rect.height - 104f);
+            var style = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 12 };
+            var rows = combatLog.Where(message =>
+            {
+                var diagnostic = message.Contains("AI 현황:") || message.Contains("AI 공세 명령:") ||
+                    message.Contains("AI 승급 보류:") || message.StartsWith("영구 경기 로그:");
+                return logFilter == 2 || (logFilter == 1 ? diagnostic : !diagnostic);
+            }).ToList();
+            var contentWidth = Mathf.Max(64f, viewport.width - 22f);
+            var heights = rows.Select(row => Mathf.Max(24f, style.CalcHeight(new GUIContent(row), contentWidth)) + 5f).ToList();
+            var height = Mathf.Max(viewport.height, heights.Sum());
+            if (Event.current.type == EventType.ScrollWheel && viewport.Contains(Event.current.mousePosition))
+                followLatestLog = false;
+            if (followLatestLog) combatLogScroll.y = Mathf.Max(0f, height - viewport.height);
+            var previousScroll = combatLogScroll;
             combatLogScroll = GUI.BeginScrollView(viewport, combatLogScroll,
-                new Rect(0f, 0f, 654f, contentHeight));
-            for (var index = 0; index < combatLog.Count; index++)
-                GUI.Label(new Rect(4f, index * 22f, 640f, 22f), combatLog[index]);
+                new Rect(0f, 0f, contentWidth, height));
+            if (Mathf.Abs(combatLogScroll.y - previousScroll.y) > 0.5f) followLatestLog = false;
+            var y = 0f;
+            for (var index = 0; index < rows.Count; index++)
+            {
+                GUI.Label(new Rect(0f, y, contentWidth, heights[index]), rows[index], style);
+                y += heights[index];
+            }
+            if (rows.Count == 0) GUI.Label(new Rect(0f, 0f, contentWidth, 40f), "표시할 기록이 없습니다.", style);
             GUI.EndScrollView();
+        }
+
+        private Rect CombatLogRect()
+        {
+            var availableWidth = selectedTileId.IsValid || HasManagementPanel ? SelectionPanelRect().x - 24f : Screen.width / UiScale - 32f;
+            var height = logCollapsed ? 34f : 260f;
+            return new Rect(16f, Mathf.Max(160f, Screen.height / UiScale - height - 16f),
+                Mathf.Max(100f, Mathf.Min(700f, availableWidth)), height);
         }
 
         private void DrawRouteTurnMarkers()
@@ -2457,7 +3247,9 @@ namespace LittleCiv.Runtime
             };
             markerStyle.normal.textColor = Color.white;
             var firstMovement = PlannedMovementForTurn(unit);
-            var laterMovement = Mathf.Max(1, UnitRules.Movement(unit.Type));
+            var laterType = plannedPromotions.TryGetValue(unit.Id, out var markerPromotion)
+                ? (UnitType)markerPromotion.PrimaryValue : unit.Type;
+            var laterMovement = Mathf.Max(1, UnitRules.Movement(laterType));
             var previousTurn = 0;
             for (var step = 1; step <= route.Path.Count; step++)
             {
@@ -2488,30 +3280,120 @@ namespace LittleCiv.Runtime
         private void DrawSelectedTilePanel()
         {
             if (!selectedTileId.IsValid) return;
-            var logicalWidth = Screen.width / UiScale;
-            var compact = logicalWidth < 900f;
-            var x = compact ? 16f : logicalWidth - 430f;
-            var yOffset = compact ? 526f : 16f;
-            GUI.Box(new Rect(x, yOffset, 414f, 600f), string.Empty);
+            var tile = state.Tiles.Find(item => item.Id == selectedTileId);
+            if (tile == null) return;
+            var district = state.Districts.Find(item => item.TileId == tile.Id);
+            var city = state.Cities.Find(item => item.Id == tile.CityId);
+            var neutral = FindNeutralCityForTile(tile.Id);
+            var rect = SelectionPanelRect();
+            GUI.Box(rect, string.Empty);
+            var title = district == null ? "미개발 타일" : DistrictName(district.Type);
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, 335f, 24f),
+                $"{title} · {city?.Name}", new GUIStyle(GUI.skin.label) { fontStyle = FontStyle.Bold, fontSize = 15 });
+            if (GUI.Button(new Rect(rect.xMax - 58f, rect.y + 8f, 46f, 26f), "닫기"))
+            {
+                selectedTileId = default;
+                selectedUnitId = default;
+                selectedUnitGroup.Clear();
+                ShowCities(new[] { state.Cities[focusedCityIndex].Id });
+                return;
+            }
+            GUI.Label(new Rect(rect.x + 14f, rect.y + 38f, 402f, 42f),
+                $"소유: {(city == null ? "없음" : PlayerDisplayName(city.OwnerId))}\n" +
+                (district == null ? "상태: 미개발" : $"상태: {DistrictStatus(district, city)}"));
+            var tabs = neutral == null ? new[] { "타일·지구", "병력", "이동·예측" }
+                : new[] { "타일·지구", "병력", "도시·외교", "이동·예측" };
+            selectionTab = Mathf.Clamp(selectionTab, 0, tabs.Length - 1);
+            var nextTab = GUI.Toolbar(new Rect(rect.x + 12f, rect.y + 84f, rect.width - 24f, 30f), selectionTab, tabs);
+            if (nextTab != selectionTab) { selectionTab = nextTab; selectionScroll = Vector2.zero; }
+            var viewport = new Rect(rect.x + 6f, rect.y + 122f, rect.width - 12f, rect.height - 130f);
+            selectionScroll = GUI.BeginScrollView(viewport, selectionScroll, new Rect(0f, 0f, 406f, 660f));
+            try
+            {
+                if (selectionTab == 1)
+                {
+                    if (!state.Units.Any(item => item.TileId == selectedTileId))
+                        GUI.Label(new Rect(14f, 8f, 376f, 28f), "이 타일에 병력이 없습니다.");
+                    else DrawUnitsOnSelectedTile(0f, 8f);
+                }
+                else if (selectionTab == tabs.Length - 1) DrawSelectedUnitForecast();
+                else if (selectionTab == 2 && neutral != null) DrawNeutralCityActions(0f, -30f, neutral);
+                else DrawSelectedTileActions();
+            }
+            finally { GUI.enabled = true; GUI.EndScrollView(); }
+        }
+
+        private Rect SelectionPanelRect()
+        {
+            return new Rect(Mathf.Max(8f, Screen.width / UiScale - 446f), 160f, 430f,
+                Mathf.Max(180f, Screen.height / UiScale - 176f));
+        }
+
+        private void DrawSelectedUnitForecast()
+        {
+            var unit = state.Units.Find(item => item.Id == selectedUnitId && item.OwnerId == activePlayerId);
+            var style = new GUIStyle(GUI.skin.label) { wordWrap = true, fontSize = 13 };
+            if (unit == null)
+            {
+                GUI.Label(new Rect(14f, 8f, 376f, 60f), "병력 탭에서 내 병력을 선택하면 이동·군량·교전 예상을 확인할 수 있습니다.", style);
+                return;
+            }
+            routePlans.TryGetValue(unit.Id, out var route);
+            var turns = route == null ? 0 : CalculateRouteTurns(unit, route.Path.Count);
+            GUI.Label(new Rect(14f, 8f, 376f, 82f),
+                $"{UnitName(unit.Type)} {unit.Id} · 체력 {unit.HitPoints}/{UnitRules.MaximumHitPoints(unit.Type)}\n" +
+                $"이번 턴 이동력 {PlannedMovementForTurn(unit)}\n" +
+                (route == null ? "이동 예약 없음 — 목적지를 우클릭하세요."
+                    : $"목적지 타일 {route.DestinationId} · 남은 {route.Path.Count}칸 · 약 {turns}턴 후 도착"), style);
+            plannedFoodAdjustments.TryGetValue(unit.Id, out var foodOrder);
+            var food = Mathf.Max(0, unit.CarriedFood + (foodOrder == null ? 0 : foodOrder.PrimaryValue));
+            var endurance = food / Mathf.Max(1, UnitRules.FoodConsumption(unit.Type));
+            var warning = unit.IsStarving || (route != null && endurance < turns);
+            var previousColor = GUI.color;
+            if (warning) GUI.color = new Color(1f, 0.65f, 0.25f);
+            GUI.Label(new Rect(14f, 98f, 376f, 108f),
+                $"군량 {unit.CarriedFood}/{UnitRules.FoodCapacity(state, unit)} · 적재 예약 반영 {food}\n" +
+                $"추가 보급 없이 약 {endurance}턴분\n" +
+                (unit.IsStarving ? "굶주림 상태: 이번 식량 처리 전 보급이 필요합니다.\n"
+                    : warning ? "군량 주의: 예상 이동 기간보다 휴대 군량이 부족합니다.\n" : string.Empty) +
+                "본토·점령지 보급, 현장 습득과 병력 간 교환은 이 예상에서 제외됩니다.", style);
+            GUI.Label(new Rect(14f, 212f, 376f, 44f),
+                "군량 부족 시 굶주림으로 전투력이 감소하고, 다음 턴까지 보급받지 못하면 전멸합니다.", style);
+            GUI.color = previousColor;
+            if (route != null && combatPreviews.TryGetValue(unit.Id, out var preview))
+            {
+                GUI.Label(new Rect(14f, 266f, 376f, 278f), preview, style);
+                GUI.Label(new Rect(14f, 552f, 376f, 80f),
+                    "예약 당시 이 병력 단독 교전 기준입니다. 집단 공격·상대 이동·회복·승급에 따라 실제 결과는 달라질 수 있습니다.", style);
+            }
+            else GUI.Label(new Rect(14f, 266f, 376f, 75f),
+                "현재 교전 예상 없음. 적 병력이 있는 목적지에 이동을 예약하면 양측 예상 체력을 표시합니다.", style);
+        }
+
+        private void DrawSelectedTileActions()
+        {
+            const float x = 0f;
+            const float yOffset = 0f;
             var selectedTile = state.Tiles.Find(item => item.Id == selectedTileId);
             var projectedGroundFood = ProjectedGroundFood(selectedTile);
             var groundFoodInfo = selectedTile != null && selectedTile.GroundFood > 0
                 ? $"군량 {selectedTile.GroundFood}" +
                   (projectedGroundFood != selectedTile.GroundFood
                       ? $" → 예약 후 {projectedGroundFood}" : string.Empty) +
-                  $" | 소유자 {selectedTile.GroundFoodOwnerId}" +
+                    $" | 소유자 {PlayerDisplayName(selectedTile.GroundFoodOwnerId)}" +
                   (selectedTile.GroundFoodReturnTurn > 0
                        ? $" | {selectedTile.GroundFoodReturnTurn}턴에 귀속"
                        : " | 타일에 보관")
                 : "군량 0";
             var resourceInfo = selectedTile == null ? TileResourceType.None : selectedTile.ResourceType;
-            GUI.Label(new Rect(x + 14f, yOffset + 10f, 390f, 24f),
-                $"타일 {selectedTileId} | 자원 {ResourceName(resourceInfo)} | {groundFoodInfo}");
+            GUI.Label(new Rect(x + 14f, yOffset, 376f, 38f),
+                $"자원: {ResourceName(resourceInfo)}\n현장 {groundFoodInfo}");
 
             var neutralCity = FindNeutralCityForTile(selectedTileId);
             if (neutralCity != null)
             {
-                DrawNeutralCityActions(x, yOffset, neutralCity);
+                GUI.Label(new Rect(14f, 48f, 376f, 70f),
+                    "중립도시의 지구입니다.\n교역·징병·문화 정보는 도시·외교 탭에서 확인하세요.");
                 return;
             }
 
@@ -2543,7 +3425,6 @@ namespace LittleCiv.Runtime
                     DrawDefenseFacilityActions(x, yOffset + actionOffset, district);
                     actionOffset += 136f;
                 }
-                DrawUnitsOnSelectedTile(x, yOffset + actionOffset);
                 return;
             }
 
@@ -2552,7 +3433,6 @@ namespace LittleCiv.Runtime
             {
                 GUI.Label(new Rect(x + 14f, yOffset + 40f, 380f, 42f),
                     "현재 플레이어가 개발할 수 없는 타일입니다.");
-                DrawUnitsOnSelectedTile(x, yOffset + 90f);
                 return;
             }
 
@@ -2569,7 +3449,6 @@ namespace LittleCiv.Runtime
             DrawDistrictBuildButton(x + 14f, yOffset + 172f, DistrictType.Military);
             DrawDistrictBuildButton(x + 210f, yOffset + 172f, DistrictType.NuclearFacility);
             GUI.enabled = true;
-            DrawUnitsOnSelectedTile(x, yOffset + 220f);
         }
 
         private void DrawNeutralCityActions(float x, float y, CityState city)
@@ -2629,7 +3508,6 @@ namespace LittleCiv.Runtime
             }
             else GUI.Label(new Rect(x + 14f, y + 246f, 380f, 24f), "사용 가능한 전문화 행동이 없습니다.");
 
-            DrawUnitsOnSelectedTile(x, y + 420f);
         }
 
         private static string DistrictStatus(DistrictState district, CityState city)
@@ -2714,24 +3592,30 @@ namespace LittleCiv.Runtime
             var rect = ResearchPanelRect();
             GUI.Box(rect, string.Empty);
             GUI.Label(new Rect(rect.x + 14f, rect.y + 12f, 300f, 24f), "전체 중립도시 교역 현황");
-            if (GUI.Button(new Rect(rect.x + 360f, rect.y + 10f, 38f, 26f), "X"))
+            if (GUI.Button(new Rect(rect.x + 350f, rect.y + 10f, 48f, 26f), "닫기"))
             { showNeutralTradePanel = false; return; }
             var home = FindActiveHomeCity();
             if (home == null) return;
             var neutral = FindPlayer(PlayerSlot.Neutral);
             var cities = state.Cities.Where(item => neutral != null && item.OwnerId == neutral.Id)
                 .OrderBy(item => item.Id).ToList();
-            var view = new Rect(0f, 0f, 374f, Mathf.Max(520f, cities.Count * 126f));
-            neutralTradeScroll = GUI.BeginScrollView(new Rect(rect.x + 12f, rect.y + 44f, 390f, 540f),
+            var overviewStyle = new GUIStyle(GUI.skin.label) { wordWrap = true };
+            var summaries = cities.Select(city => NeutralTradeOverview(city, home)).ToList();
+            var summaryHeights = summaries.Select(summary => Mathf.Max(38f,
+                overviewStyle.CalcHeight(new GUIContent(summary), 366f))).ToList();
+            var rowHeights = summaryHeights.Select(height => height + 112f).ToList();
+            var view = new Rect(0f, 0f, 374f, Mathf.Max(100f, rowHeights.Sum()));
+            neutralTradeScroll = GUI.BeginScrollView(new Rect(rect.x + 12f, rect.y + 44f, 390f, Mathf.Max(60f, rect.height - 56f)),
                 neutralTradeScroll, view);
+            var rowY = 0f;
             for (var index = 0; index < cities.Count; index++)
             {
                 var city = cities[index];
-                var rowY = index * 126f;
                 GUI.Label(new Rect(4f, rowY, 366f, 20f),
                     $"{city.Name} | {SpecializationName(city.NeutralSpecialization)} | 우호도 {NeutralCityRules.Favor(city, activePlayerId)}");
-                GUI.Label(new Rect(4f, rowY + 21f, 366f, 38f), NeutralTradeOverview(city, home));
-                DrawNeutralTradeOverviewActions(city, home, rowY + 62f);
+                GUI.Label(new Rect(4f, rowY + 25f, 366f, summaryHeights[index]), summaries[index], overviewStyle);
+                DrawNeutralTradeOverviewActions(city, home, rowY + 30f + summaryHeights[index]);
+                rowY += rowHeights[index];
             }
             GUI.EndScrollView();
         }
@@ -2808,7 +3692,7 @@ namespace LittleCiv.Runtime
                 var repeated = repeatingNeutralTrades.Contains(RepeatingNeutralTradeKey(activePlayerId, city.Id, resource));
                 return $"금 {quote.TotalGoldCost} → {ResourceName(resource)} {quote.ResourceAmount}" +
                        (quote.IsAvailable ? " | 가능" : $" | 불가: {NeutralTradeFailureName(quote.Failure)}") +
-                       $" | 예약 {(reserved ? "O" : "X")} | 반복 {(repeated ? (quote.IsAvailable ? "O" : "O(보류)") : "X")}";
+                       $" | 예약 {(reserved ? "있음" : "없음")} | 자동 {(repeated ? (quote.IsAvailable ? "켜짐" : "보류") : "꺼짐")}";
             }
             if (city.NeutralSpecialization == NeutralCitySpecialization.Commerce)
             {
@@ -2831,7 +3715,7 @@ namespace LittleCiv.Runtime
             {
                 var quote = NeutralLevyResolver.Quote(state, activePlayerId, home.Id, city.Id);
                 return quote.IsAvailable
-                    ? $"징병 가능: {quote.UnitIds.Count}부대, 기본 금 {quote.BasePrice} | 예약 {(plannedLevyBids.ContainsKey(LevyBidKey(activePlayerId, city.Id)) ? "O" : "X")}"
+                    ? $"징병 가능: {quote.UnitIds.Count}부대, 기본 금 {quote.BasePrice} | 예약 {(plannedLevyBids.ContainsKey(LevyBidKey(activePlayerId, city.Id)) ? "있음" : "없음")}"
                     : $"징병 불가: {LevyFailureName(quote.Failure)}";
             }
             return "이용 가능한 교역 없음";

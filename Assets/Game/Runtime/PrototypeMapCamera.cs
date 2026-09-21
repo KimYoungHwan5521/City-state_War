@@ -11,6 +11,7 @@ namespace LittleCiv.Runtime
         public float MaximumSize = 60f;
 
         private Camera targetCamera;
+        private PrototypeMapPresenter presenter;
 
         private void Awake()
         {
@@ -29,6 +30,9 @@ namespace LittleCiv.Runtime
             }
 
             var scroll = mouse == null ? 0f : mouse.scroll.ReadValue().y;
+            if (presenter == null) presenter = FindFirstObjectByType<PrototypeMapPresenter>();
+            if (mouse != null && presenter != null && presenter.IsPointerOverInterface(mouse.position.ReadValue()))
+                scroll = 0f;
             if (Mathf.Abs(scroll) > 0.1f)
             {
                 var wheelSteps = scroll / 120f;
