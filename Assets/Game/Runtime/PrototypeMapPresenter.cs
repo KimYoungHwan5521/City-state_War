@@ -16,6 +16,7 @@ namespace LittleCiv.Runtime
         private sealed class UnitRoutePlan
         {
             public GameEntityId DestinationId;
+            public GameEntityId GroupId;
             public readonly List<GameEntityId> Path = new List<GameEntityId>();
         }
 
@@ -59,6 +60,7 @@ namespace LittleCiv.Runtime
             new Dictionary<GameEntityId, Vector3>();
         private GameState state;
         private SimultaneousTurnSimulator simulator;
+        private MatchAuditLogWriter matchAuditLog;
         private int focusedCityIndex;
         private GameEntityId selectedTileId;
         private GameEntityId selectedUnitId;
@@ -143,12 +145,14 @@ namespace LittleCiv.Runtime
             state = opponentAiStrategy == PlayerAiStrategy.None
                 ? PrototypeMatchFactory.Create(20260831)
                 : PrototypeMatchFactory.CreateSinglePlayer(20260831, opponentAiStrategy);
+            matchAuditLog = MatchAuditLogWriter.Start(state, opponentAiStrategy);
             simulator = new SimultaneousTurnSimulator(state);
             activePlayerId = FindPlayer(PlayerSlot.PlayerOne).Id;
             AutoConfirmAiPlayers();
             statusMessage = opponentAiStrategy == PlayerAiStrategy.None
                 ? "1턴부터 2인 대전 경기를 시작했습니다."
                 : $"1턴부터 {AiStrategyName(opponentAiStrategy)} AI 상대 경기를 시작했습니다.";
+            AddCombatLog($"영구 경기 로그: {matchAuditLog.LatestPath}");
             ShowCities(new[] { state.Cities[0].Id });
         }
 
@@ -226,6 +230,7 @@ namespace LittleCiv.Runtime
                 ? $"{DistrictName(selectedDistrict.Type)} 선택. 타일 패널에서 지구 행동을 선택하세요."
                 : "미개발 타일 선택. 타일 패널에서 건설할 지구를 선택하세요.";
             var tile = state.Tiles.Find(item => item.Id == tileId);
+            FocusCityForTile(tile);
             var fallbackCityId = state.Cities[focusedCityIndex].Id;
             ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, tile.Id, fallbackCityId));
         }
@@ -239,17 +244,15 @@ namespace LittleCiv.Runtime
                 SelectTile(tileId);
                 return;
             }
-            if (IsManeuverRecommandPhase() && unit.ManeuverRecommandTurn != state.TurnNumber)
-            {
-                statusMessage = "기동 재명령 대상 병력만 명령할 수 있습니다.";
-                return;
-            }
-
             selectedUnitId = unitId;
             selectedUnitGroup.Clear();
             selectedUnitGroup.Add(unitId);
             selectedTileId = tileId;
-            statusMessage = $"{UnitName(unit.Type)} {unit.Id} 선택. 목적지를 우클릭해 경로를 예약하세요.";
+            FocusCityForTile(state.Tiles.Find(item => item.Id == tileId));
+            statusMessage = IsManeuverRecommandPhase() &&
+                            unit.ManeuverRecommandTurn != state.TurnNumber
+                ? $"{UnitName(unit.Type)} {unit.Id} 선택. 기동 재명령 대상이 아니므로 정보 확인과 현장 군량 습득만 가능합니다."
+                : $"{UnitName(unit.Type)} {unit.Id} 선택. 목적지를 우클릭해 경로를 예약하세요.";
             var fallbackCityId = state.Cities[focusedCityIndex].Id;
             ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, tileId, fallbackCityId));
         }
@@ -260,23 +263,45 @@ namespace LittleCiv.Runtime
             if (selectedUnitGroup.Count > 1)
             {
                 var ordered = selectedUnitGroup.OrderBy(item => item.Value).ToList();
+                var leader = ordered.Select(id => state.Units.Find(item => item.Id == id))
+                    .FirstOrDefault(item => item != null && item.OwnerId == activePlayerId &&
+                        (!IsManeuverRecommandPhase() || item.ManeuverRecommandTurn == state.TurnNumber));
+                if (leader == null)
+                {
+                    statusMessage = "기동 재명령 대상 병력이 선택되어 있지 않습니다.";
+                    return true;
+                }
+                var sharedPath = TacticalPathfinder.FindPath(state, leader, tileId);
+                if (sharedPath.Count == 0)
+                {
+                    statusMessage = "목적지까지 이동 가능한 공통 경로가 없습니다.";
+                    return true;
+                }
                 var planned = 0;
                 for (var index = 0; index < ordered.Count; index++)
                 {
                     var member = state.Units.Find(item => item.Id == ordered[index]);
-                    if (member != null && member.OwnerId == activePlayerId && PlanMoveForUnit(member, tileId)) planned++;
+                    if (member != null && member.OwnerId == activePlayerId &&
+                        (!IsManeuverRecommandPhase() || member.ManeuverRecommandTurn == state.TurnNumber) &&
+                        PlanMoveForUnit(member, tileId, sharedPath, leader.Id)) planned++;
                 }
-                statusMessage = $"같은 타일 병력 {planned}/{ordered.Count}부대의 공통 목적지 이동을 예약했습니다.";
+                statusMessage = $"같은 타일 병력 {planned}/{ordered.Count}부대가 선두 병력과 동일한 경로로 이동하도록 예약했습니다.";
                 ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, selectedTileId,
                     state.Cities[focusedCityIndex].Id));
                 return true;
             }
             var unit = state.Units.Find(item => item.Id == selectedUnitId);
             if (unit == null || unit.OwnerId != activePlayerId) return true;
+            if (IsManeuverRecommandPhase() && unit.ManeuverRecommandTurn != state.TurnNumber)
+            {
+                statusMessage = "이 병력은 기동 재명령 대상이 아니므로 추가 이동할 수 없습니다.";
+                return true;
+            }
             return PlanMoveForUnit(unit, tileId);
         }
 
-        private bool PlanMoveForUnit(UnitState unit, GameEntityId tileId)
+        private bool PlanMoveForUnit(UnitState unit, GameEntityId tileId,
+            IReadOnlyList<GameEntityId> sharedPath = null, GameEntityId groupId = default)
         {
             if (NeutralLevyResolver.IsProtectedCityTile(state, unit.OwnerId, tileId, unit.Id) &&
                 HasEnemyUnit(unit, tileId))
@@ -290,7 +315,9 @@ namespace LittleCiv.Runtime
                 return true;
             }
 
-            var path = FindShortestTilePath(unit, tileId);
+            var path = sharedPath == null
+                ? FindShortestTilePath(unit, tileId)
+                : new List<GameEntityId>(sharedPath);
             if (path.Count == 0)
             {
                 statusMessage = "목적지까지 이동 가능한 경로가 없습니다.";
@@ -303,7 +330,11 @@ namespace LittleCiv.Runtime
                 plannedMoves.Remove(unit.Id);
             }
 
-            var route = new UnitRoutePlan { DestinationId = tileId };
+            var route = new UnitRoutePlan
+            {
+                DestinationId = tileId,
+                GroupId = groupId.IsValid ? groupId : unit.Id
+            };
             route.Path.AddRange(path);
             routePlans[unit.Id] = route;
             var reserved = ReserveNextRouteSegment(unit, route);
@@ -381,32 +412,70 @@ namespace LittleCiv.Runtime
 
         private void PrepareAutomaticRoutes(GameEntityId playerId)
         {
-            var unitIds = routePlans.Keys.OrderBy(id => id.Value).ToList();
-            for (var index = 0; index < unitIds.Count; index++)
+            var knownRouteIds = routePlans.Keys.ToList();
+            for (var index = 0; index < knownRouteIds.Count; index++)
             {
-                var unitId = unitIds[index];
-                var unit = state.Units.Find(item => item.Id == unitId);
-                var route = routePlans[unitId];
-                if (unit == null || unit.OwnerId != playerId)
+                if (state.Units.Find(item => item.Id == knownRouteIds[index]) == null)
+                    routePlans.Remove(knownRouteIds[index]);
+            }
+            var unitIds = knownRouteIds.Where(id => routePlans.ContainsKey(id) &&
+                    state.Units.Find(item => item.Id == id)?.OwnerId == playerId)
+                .OrderBy(id => id.Value).ToList();
+            var groups = unitIds.GroupBy(id => routePlans[id].GroupId.IsValid
+                ? routePlans[id].GroupId : id).OrderBy(group => group.Key.Value).ToList();
+            for (var groupIndex = 0; groupIndex < groups.Count; groupIndex++)
+            {
+                var members = groups[groupIndex].Select(id => state.Units.Find(item => item.Id == id))
+                    .Where(unit => unit != null).OrderBy(unit => unit.Id.Value).ToList();
+                if (members.Count == 0) continue;
+                var activeMembers = members.Where(unit =>
                 {
-                    if (unit == null) routePlans.Remove(unitId);
+                    var route = routePlans[unit.Id];
+                    if (unit.TileId == route.DestinationId)
+                    {
+                        routePlans.Remove(unit.Id);
+                        return false;
+                    }
+                    return !IsManeuverRecommandPhase() ||
+                           unit.ManeuverRecommandTurn == state.TurnNumber;
+                }).ToList();
+                if (activeMembers.Count == 0) continue;
+                var leader = activeMembers[0];
+                var leaderRoute = routePlans[leader.Id];
+                var canShare = activeMembers.Count > 1 && activeMembers.All(unit =>
+                    unit.TileId == leader.TileId &&
+                    routePlans[unit.Id].DestinationId == leaderRoute.DestinationId);
+                if (canShare)
+                {
+                    var sharedPath = FindShortestTilePath(leader, leaderRoute.DestinationId);
+                    if (sharedPath.Count == 0)
+                    {
+                        for (var index = 0; index < activeMembers.Count; index++)
+                            routePlans.Remove(activeMembers[index].Id);
+                        continue;
+                    }
+                    for (var index = 0; index < activeMembers.Count; index++)
+                    {
+                        var route = routePlans[activeMembers[index].Id];
+                        route.Path.Clear();
+                        route.Path.AddRange(sharedPath);
+                        ReserveNextRouteSegment(activeMembers[index], route);
+                    }
                     continue;
                 }
-                if (IsManeuverRecommandPhase() && unit.ManeuverRecommandTurn != state.TurnNumber)
-                    continue;
-                if (unit.TileId == route.DestinationId)
+                for (var index = 0; index < activeMembers.Count; index++)
                 {
-                    routePlans.Remove(unitId);
-                    continue;
+                    var unit = activeMembers[index];
+                    var route = routePlans[unit.Id];
+                    route.Path.Clear();
+                    route.Path.AddRange(FindShortestTilePath(unit, route.DestinationId));
+                    if (route.Path.Count == 0)
+                    {
+                        routePlans.Remove(unit.Id);
+                        continue;
+                    }
+                    ReserveNextRouteSegment(unit, route);
                 }
-                route.Path.Clear();
-                route.Path.AddRange(FindShortestTilePath(unit, route.DestinationId));
-                if (route.Path.Count == 0)
-                {
-                    routePlans.Remove(unitId);
-                    continue;
-                }
-                ReserveNextRouteSegment(unit, route);
             }
         }
 
@@ -470,24 +539,56 @@ namespace LittleCiv.Runtime
                 return;
             }
 
+            var auditBeforeState = MatchAuditLogWriter.CaptureState(state, "턴 처리 전 상태");
             var resolution = simulator.ResolveConfirmedTurn();
             ResolveManeuversAsCombat(resolution);
+            FinalizeConquestAfterManeuverCombat(resolution);
+            matchAuditLog?.AppendTurn(auditBeforeState, resolution, state);
             for (var eventIndex = 0; eventIndex < resolution.Events.Count; eventIndex++)
             {
                 var gameEvent = resolution.Events[eventIndex];
+                if (gameEvent.Type == GameEventType.ResearchSelected)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 연구 선택: {PlayerDisplayName(gameEvent.SourceId)} | " +
+                                 ResearchName((ResearchType)gameEvent.PrimaryValue));
+                if (gameEvent.Type == GameEventType.ResearchCompleted)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 연구 완료: {PlayerDisplayName(gameEvent.SourceId)} | " +
+                                 ResearchName((ResearchType)gameEvent.PrimaryValue));
+                if (gameEvent.Type == GameEventType.UnitTrainingStarted)
+                {
+                    var district = state.Districts.Find(item => item.Id == gameEvent.SourceId);
+                    var trainingCity = district == null ? null : state.Cities.Find(item => item.Id == district.CityId);
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 병력 훈련 시작: " +
+                                 $"{(trainingCity == null ? "도시 미상" : trainingCity.Name)} | " +
+                                 UnitName((UnitType)gameEvent.PrimaryValue));
+                }
+                if (gameEvent.Type == GameEventType.UnitTrainingCompleted)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 병력 훈련 완료: 병력 {gameEvent.SourceId} | " +
+                                 UnitName((UnitType)gameEvent.PrimaryValue));
+                if (gameEvent.Type == GameEventType.UnitPromoted)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 병력 승급: 병력 {gameEvent.SourceId} → " +
+                                 $"{UnitName((UnitType)gameEvent.PrimaryValue)} | 금 {gameEvent.SecondaryValue}");
+                if (gameEvent.Type == GameEventType.AiPromotionDeferred)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 AI 승급 보류: " +
+                                 $"{PlayerDisplayName(gameEvent.SourceId)} 병력 {gameEvent.TargetId} → " +
+                                 $"{UnitName((UnitType)gameEvent.SecondaryValue)} | " +
+                                 PromotionDeferralName((PlayerAiPromotionDeferralReason)gameEvent.PrimaryValue));
                 if (gameEvent.Type == GameEventType.MovementBlocked)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 이동 차단: 병력 {gameEvent.SourceId}, " +
                                  $"사유 {MovementStopReasonName((MovementStopReason)gameEvent.SecondaryValue)}");
                 if (gameEvent.Type == GameEventType.DistrictPillaged)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 약탈: 지구 {gameEvent.TargetId} | " +
                                  $"보상 {gameEvent.PrimaryValue}, 식량 {gameEvent.SecondaryValue}");
+                if (gameEvent.Type == GameEventType.GroundFoodPickedUp)
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 현장 군량 습득: 병력 {gameEvent.SourceId} | " +
+                                 $"타일 {gameEvent.TargetId}, 군량 {gameEvent.PrimaryValue}");
                 if (gameEvent.Type == GameEventType.ColdWarStarted)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 냉전체제: 양측 핵 프로젝트 동시 완료, " +
                                  "양 플레이어에게 자가학습 AI(과학 300) 해금");
                 if (gameEvent.Type == GameEventType.UnitStarvationStarted)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 굶주림: 병력 {gameEvent.SourceId}의 전투력이 감소했습니다.");
                 if (gameEvent.Type == GameEventType.UnitStarvedToDeath)
-                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 아사: 병력 {gameEvent.SourceId}이 군량 부족으로 전멸했습니다.");
+                    AddCombatLog($"{resolution.ResolvedTurnNumber}턴 아사: 병력 {gameEvent.SourceId}이 군량 부족으로 전멸했습니다. " +
+                                 $"당일 유지비 {gameEvent.PrimaryValue}금 반환");
                 if (gameEvent.Type == GameEventType.UnitDisbanded)
                     AddCombatLog($"{resolution.ResolvedTurnNumber}턴 유지비 해산: 병력 {gameEvent.SourceId} | " +
                                  $"반환 군량 {gameEvent.PrimaryValue}");
@@ -513,6 +614,7 @@ namespace LittleCiv.Runtime
                                  "도시 기지 소유권 교환, 기존 병력 제어권 유지");
                 }
             }
+            AppendAiTurnDiagnostics(resolution);
             turnLog.Insert(0, $"{resolution.ResolvedTurnNumber}턴: 명령 {resolution.Commands.Count}개, " +
                               $"충돌 {resolution.ManeuverRequests.Count}건.");
             if (turnLog.Count > 5) turnLog.RemoveAt(turnLog.Count - 1);
@@ -703,6 +805,58 @@ namespace LittleCiv.Runtime
             GroundFoodResolver.ReconcileVacatedOwnership(state);
         }
 
+        private void FinalizeConquestAfterManeuverCombat(TurnResolution resolution)
+        {
+            if (state.IsGameOver)
+            {
+                resolution.ResultStateHash = GameStateHasher.Compute(state);
+                return;
+            }
+
+            var playerCities = state.Cities.Where(city =>
+            {
+                var owner = state.Players.Find(player => player.Id == city.OwnerId);
+                return owner != null && owner.Slot != PlayerSlot.Neutral;
+            }).OrderBy(city => city.Id.Value).ToList();
+            var firstOwnerBefore = playerCities.Count == 2 ? playerCities[0].OwnerId : default;
+            var secondOwnerBefore = playerCities.Count == 2 ? playerCities[1].OwnerId : default;
+            var winner = VictoryResolver.ResolveConquest(state);
+            if (winner.IsValid)
+            {
+                resolution.Events.Add(PostResolutionEvent(resolution,
+                    GameEventType.VictoryTriggered, winner,
+                    primaryValue: (int)VictoryType.Conquest));
+            }
+            else if (playerCities.Count == 2 &&
+                     playerCities[0].OwnerId == secondOwnerBefore &&
+                     playerCities[1].OwnerId == firstOwnerBefore)
+            {
+                resolution.Events.Add(PostResolutionEvent(resolution,
+                    GameEventType.PlayerCitiesExchanged,
+                    playerCities[0].Id, playerCities[1].Id));
+            }
+            resolution.ResultStateHash = GameStateHasher.Compute(state);
+        }
+
+        private static GameEvent PostResolutionEvent(TurnResolution resolution,
+            GameEventType type, GameEntityId sourceId, GameEntityId targetId = default,
+            int primaryValue = 0, int secondaryValue = 0)
+        {
+            var sequence = resolution.Events.Count == 0
+                ? 1
+                : resolution.Events.Max(item => item.Sequence) + 1;
+            return new GameEvent
+            {
+                Sequence = sequence,
+                TurnNumber = resolution.ResolvedTurnNumber,
+                Type = type,
+                SourceId = sourceId,
+                TargetId = targetId,
+                PrimaryValue = primaryValue,
+                SecondaryValue = secondaryValue
+            };
+        }
+
         private bool ShouldForceNeutralDetourAttackers(ManeuverRequest request, int resolvedTurnNumber)
         {
             var tile = state.Tiles.Find(item => item.Id == request.BlockedTileId);
@@ -718,7 +872,86 @@ namespace LittleCiv.Runtime
         private void AddCombatLog(string message)
         {
             combatLog.Insert(0, message);
-            if (combatLog.Count > 200) combatLog.RemoveAt(combatLog.Count - 1);
+            if (combatLog.Count > 2000) combatLog.RemoveAt(combatLog.Count - 1);
+        }
+
+        private void AppendAiTurnDiagnostics(TurnResolution resolution)
+        {
+            var aiPlayers = state.Players.Where(item => item.Slot != PlayerSlot.Neutral &&
+                item.AiStrategy != PlayerAiStrategy.None).OrderBy(item => item.Id.Value).ToList();
+            for (var index = 0; index < aiPlayers.Count; index++)
+            {
+                var player = aiPlayers[index];
+                var city = state.Cities.Find(item => item.OwnerId == player.Id);
+                if (city == null) continue;
+                var economy = CityEconomyResolver.CalculateBreakdown(state, city);
+                var current = player.CurrentResearch == ResearchType.None
+                    ? "없음"
+                    : $"{ResearchName(player.CurrentResearch)} " +
+                      $"{ResearchResolver.Progress(player, player.CurrentResearch)}/" +
+                      $"{ResearchRules.Cost(player.CurrentResearch)}";
+                var militia = state.Units.Count(item => item.OwnerId == player.Id && item.Type == UnitType.Militia);
+                var iron = state.Units.Count(item => item.OwnerId == player.Id && item.Type == UnitType.IronInfantry);
+                var gunpowder = state.Units.Count(item => item.OwnerId == player.Id && item.Type == UnitType.GunpowderInfantry);
+                var mechanized = state.Units.Count(item => item.OwnerId == player.Id && item.Type == UnitType.MechanizedInfantry);
+                AddCombatLog($"{resolution.ResolvedTurnNumber}턴 AI 현황: {PlayerDisplayName(player.Id)} | " +
+                             $"연구 {current}, 철기 {(player.CompletedResearch.Contains(ResearchType.IronWorking) ? "완료" : "미완료")} | " +
+                             $"금 {city.Gold}(순 {Signed(economy.Gold.Total - economy.UnitUpkeep - economy.FacilityUpkeep)}), " +
+                             $"식량 {city.StoredFood}(순 {Signed(economy.FoodNet)}) | " +
+                             $"민병 {militia}/철제 {iron}/화약 {gunpowder}/기계화 {mechanized}");
+
+                var enemy = state.Players.Find(item => item.Slot != PlayerSlot.Neutral && item.Id != player.Id);
+                var enemyCity = enemy == null ? null : state.Cities.Find(item => item.OwnerId == enemy.Id);
+                if (enemyCity == null) continue;
+                var hasOffensiveMove = resolution.Commands.Any(command =>
+                {
+                    if (command.PlayerId != player.Id || command.Type != GameCommandType.MoveUnit) return false;
+                    var targetTile = state.Tiles.Find(item => item.Id == command.TargetId);
+                    return targetTile != null && targetTile.CityId == enemyCity.Id;
+                });
+                if (!hasOffensiveMove) continue;
+                var assessment = EasyPlayerAiPlanner.Assess(state, player, city);
+                AddCombatLog($"{resolution.ResolvedTurnNumber}턴 AI 공세 명령: {PlayerDisplayName(player.Id)} → " +
+                             $"{enemyCity.Name} | 전력 {assessment.OwnCombatPower}:{assessment.EnemyCombatPower}, " +
+                             $"위협 {ThreatLevelName(assessment.ThreatLevel)}");
+            }
+        }
+
+        private string PlayerDisplayName(GameEntityId playerId)
+        {
+            var player = FindPlayer(playerId);
+            return player == null ? $"플레이어 {playerId}" :
+                $"{PlayerName(player.Slot)}{(player.AiStrategy == PlayerAiStrategy.None ? string.Empty : $"({AiStrategyName(player.AiStrategy)})")}";
+        }
+
+        private static string PromotionDeferralName(PlayerAiPromotionDeferralReason reason)
+        {
+            switch (reason)
+            {
+                case PlayerAiPromotionDeferralReason.NoMovement: return "남은 이동력 없음";
+                case PlayerAiPromotionDeferralReason.OutsideOwnedHomeTerritory: return "자국 본도시 영토 밖";
+                case PlayerAiPromotionDeferralReason.InsufficientGold: return "승급 차액 부족";
+                case PlayerAiPromotionDeferralReason.EconomyUnsafe: return "식량·금 안전선 또는 2턴 비축 미달";
+                default: return "알 수 없는 사유";
+            }
+        }
+
+        private static string ThreatLevelName(PlayerAiThreatLevel level)
+        {
+            switch (level)
+            {
+                case PlayerAiThreatLevel.Potential: return "잠재";
+                case PlayerAiThreatLevel.Direct: return "직접";
+                case PlayerAiThreatLevel.Emergency: return "긴급";
+                default: return "없음";
+            }
+        }
+
+        private void FocusCityForTile(TileState tile)
+        {
+            if (tile == null || !tile.CityId.IsValid) return;
+            var index = state.Cities.FindIndex(item => item.Id == tile.CityId);
+            if (index >= 0) focusedCityIndex = index;
         }
 
         private void FocusOwnedCity(GameEntityId playerId)
@@ -932,6 +1165,28 @@ namespace LittleCiv.Runtime
             statusMessage = result == CommandMutationResult.Accepted
                 ? "현장 군량을 가능한 만큼 습득하도록 예약했습니다."
                 : $"현장 군량 습득 명령 거부: {CommandResultName(result)}";
+            if (result == CommandMutationResult.Accepted)
+                ShowCities(MapVisibilityResolver.ResolveCitiesForTile(state, tile.Id,
+                    state.Cities[focusedCityIndex].Id));
+        }
+
+        private int ProjectedGroundFood(TileState tile)
+        {
+            if (tile == null || tile.GroundFood <= 0) return 0;
+            var remaining = tile.GroundFood;
+            foreach (var command in plannedGroundFoodPickups.Values
+                         .Where(item => item.TargetId == tile.Id)
+                         .OrderBy(item => item.CommandId.Value))
+            {
+                var unit = state.Units.Find(item => item.Id == command.SubjectId);
+                if (unit == null || unit.TileId != tile.Id || unit.HitPoints <= 0) continue;
+                var capacity = UnitRules.FoodCapacity(state, unit);
+                var requested = command.PrimaryValue <= 0 ? remaining : command.PrimaryValue;
+                remaining -= Mathf.Min(requested,
+                    Mathf.Min(remaining, capacity - unit.CarriedFood));
+                if (remaining <= 0) return 0;
+            }
+            return remaining;
         }
 
         private void CancelTraining(DistrictState district)
@@ -1512,8 +1767,9 @@ namespace LittleCiv.Runtime
 
         private void CreateGroundFoodMarker(Transform tileTransform, TileState tile)
         {
-            if (tile.GroundFood <= 0) return;
-            var marker = new GameObject($"Dropped food ({tile.GroundFood})");
+            var projectedFood = ProjectedGroundFood(tile);
+            if (projectedFood <= 0) return;
+            var marker = new GameObject($"Dropped food ({projectedFood})");
             marker.transform.SetParent(tileTransform, false);
             marker.transform.localPosition = new Vector3(-0.42f, 0.38f, -0.30f);
             var filter = marker.AddComponent<MeshFilter>();
@@ -1824,7 +2080,9 @@ namespace LittleCiv.Runtime
             var city = state.Cities[focusedCityIndex];
             var economy = CityEconomyResolver.CalculateBreakdown(state, city);
             GUI.Box(new Rect(16f, 16f, 410f, 505f), string.Empty);
-            GUI.Label(new Rect(28f, 25f, 360f, 22f), $"도시 {city.Name}  월드 좌표 ({city.WorldQ}, {city.WorldR})");
+            var cityOwner = FindPlayer(city.OwnerId);
+            GUI.Label(new Rect(28f, 25f, 380f, 22f),
+                $"도시 {city.Name} | {(cityOwner == null ? "소유자 미상" : PlayerDisplayName(cityOwner.Id))} | 좌표 ({city.WorldQ}, {city.WorldR})");
             GUI.Label(new Rect(28f, 47f, 360f, 22f),
                 $"인구 {city.Population} | 금 {city.Gold} | 비축 식량 {city.StoredFood}");
             DrawYieldRow(28f, 73f, "식량", economy.Food);
@@ -1832,8 +2090,9 @@ namespace LittleCiv.Runtime
                 $"소비: 인구 -{economy.PopulationConsumption}, 병력 -{economy.UnitFoodConsumption} " +
                 $"=> 순생산 {Signed(economy.FoodNet)}");
             DrawYieldRow(28f, 118f, "금", economy.Gold);
-            GUI.Label(new Rect(44f, 139f, 340f, 20f),
-                $"유지비: 병력 -{economy.UnitUpkeep}, 시설 -{economy.FacilityUpkeep}");
+            GUI.Label(new Rect(44f, 139f, 360f, 20f),
+                $"유지비: 병력 -{economy.UnitUpkeep} [{UnitUpkeepSummary(city)}] | " +
+                $"시설 -{economy.FacilityUpkeep} | 합계 -{economy.UnitUpkeep + economy.FacilityUpkeep}");
             DrawYieldRow(28f, 163f, "과학", economy.Science);
             DrawYieldRow(28f, 187f, "문화", economy.Culture);
             DrawCultureStatus(city, 28f, 212f);
@@ -1983,6 +2242,17 @@ namespace LittleCiv.Runtime
                    $"문화 {Count(DistrictType.Culture)} | 군사 {Count(DistrictType.Military)} | 미배정 {Mathf.Max(0, city.Population - used)}";
         }
 
+        private string UnitUpkeepSummary(CityState city)
+        {
+            var groups = state.Units.Where(unit => unit.OwnerId == city.OwnerId &&
+                    (unit.HomeCityId.IsValid ? unit.HomeCityId == city.Id :
+                        state.Tiles.Any(tile => tile.Id == unit.TileId && tile.CityId == city.Id)))
+                .GroupBy(unit => unit.Type).OrderBy(group => (int)group.Key)
+                .Select(group => $"{UnitName(group.Key)} {group.Count()}×" +
+                                 $"{MaintenanceResolver.UnitUpkeep(group.Key)}").ToList();
+            return groups.Count == 0 ? "없음" : string.Join(", ", groups);
+        }
+
         private static void AddCultureProgress(List<string> output, CityState city, PlayerState player)
         {
             if (player == null || player.Id == city.OwnerId || city.CultureInfluences == null) return;
@@ -2005,14 +2275,17 @@ namespace LittleCiv.Runtime
         {
             var rect = ResearchPanelRect();
             GUI.Box(rect, string.Empty);
-            var player = FindPlayer(activePlayerId);
+            var focusedCity = state.Cities[focusedCityIndex];
+            var focusedOwner = FindPlayer(focusedCity.OwnerId);
+            var player = focusedOwner != null && focusedOwner.Slot != PlayerSlot.Neutral
+                ? focusedOwner : FindPlayer(activePlayerId);
             if (player == null) return;
-            plannedResearch.TryGetValue(activePlayerId, out var planned);
+            plannedResearch.TryGetValue(player.Id, out var planned);
             var shownResearch = planned == null ? player.CurrentResearch : (ResearchType)planned.PrimaryValue;
             var currentProgress = shownResearch == ResearchType.None
                 ? 0 : ResearchResolver.Progress(player, shownResearch);
             GUI.Label(new Rect(rect.x + 14f, rect.y + 10f, 290f, 24f),
-                $"연구 — {PlayerName(player.Slot)}");
+                $"연구 — {PlayerName(player.Slot)}{(player.Id == activePlayerId ? string.Empty : " (정보 열람)")}");
             if (GUI.Button(new Rect(rect.x + 310f, rect.y + 8f, 90f, 28f), "닫기"))
             {
                 showResearchPanel = false;
@@ -2032,9 +2305,11 @@ namespace LittleCiv.Runtime
                 shownResearch == ResearchType.None
                     ? "효과: 연구를 선택하면 완료 효과가 표시됩니다."
                     : $"효과: {ResearchEffectDescription(shownResearch)}");
+            GUI.enabled = player.Id == activePlayerId;
             if (planned != null && GUI.Button(new Rect(rect.x + 14f, rect.y + 104f, 376f, 28f),
                 "연구 변경 예약 취소"))
                 CancelResearchReservation();
+            GUI.enabled = true;
             var viewport = new Rect(rect.x + 8f, rect.y + 140f, rect.width - 16f, rect.height - 150f);
             var content = new Rect(0f, 0f, 378f, 410f);
             researchScroll = GUI.BeginScrollView(viewport, researchScroll, content);
@@ -2054,7 +2329,8 @@ namespace LittleCiv.Runtime
                     : available
                         ? $"{ResearchName(type)} {progress}/{ResearchRules.Cost(type)}"
                         : $"{ResearchName(type)} ← {ResearchName(prerequisite)}";
-                GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && available && !completed;
+                GUI.enabled = player.Id == activePlayerId && !state.IsGameOver &&
+                              !IsManeuverRecommandPhase() && available && !completed;
                 if (GUI.Button(new Rect(2f + (column * 188f), 4f + (row * 38f), 182f, 32f), label))
                     ReserveResearch(type);
             }
@@ -2156,7 +2432,7 @@ namespace LittleCiv.Runtime
             const float height = 166f;
             var y = Mathf.Max(526f, logicalHeight - height - 16f);
             GUI.Box(new Rect(16f, y, 700f, height), string.Empty);
-            GUI.Label(new Rect(28f, y + 8f, 660f, 22f), "전투/이동 기록");
+            GUI.Label(new Rect(28f, y + 8f, 660f, 22f), "게임/AI 진단 기록");
             var viewport = new Rect(24f, y + 30f, 684f, 128f);
             var contentHeight = Mathf.Max(viewport.height, combatLog.Count * 22f);
             combatLogScroll = GUI.BeginScrollView(viewport, combatLogScroll,
@@ -2218,8 +2494,12 @@ namespace LittleCiv.Runtime
             var yOffset = compact ? 526f : 16f;
             GUI.Box(new Rect(x, yOffset, 414f, 600f), string.Empty);
             var selectedTile = state.Tiles.Find(item => item.Id == selectedTileId);
+            var projectedGroundFood = ProjectedGroundFood(selectedTile);
             var groundFoodInfo = selectedTile != null && selectedTile.GroundFood > 0
-                ? $"군량 {selectedTile.GroundFood} | 소유자 {selectedTile.GroundFoodOwnerId}" +
+                ? $"군량 {selectedTile.GroundFood}" +
+                  (projectedGroundFood != selectedTile.GroundFood
+                      ? $" → 예약 후 {projectedGroundFood}" : string.Empty) +
+                  $" | 소유자 {selectedTile.GroundFoodOwnerId}" +
                   (selectedTile.GroundFoodReturnTurn > 0
                        ? $" | {selectedTile.GroundFoodReturnTurn}턴에 귀속"
                        : " | 타일에 보관")
@@ -2915,15 +3195,18 @@ namespace LittleCiv.Runtime
             if (units.Count == 0) return;
             GUI.Label(new Rect(x + 14f, y, 380f, 22f), "타일 위 병력(이동 명령을 내릴 병력 선택):");
             var friendly = units.Where(item => item.OwnerId == activePlayerId).ToList();
-            GUI.enabled = friendly.Count > 1 && !state.IsGameOver;
+            var groupSelectable = IsManeuverRecommandPhase()
+                ? friendly.Where(item => item.ManeuverRecommandTurn == state.TurnNumber).ToList()
+                : friendly;
+            GUI.enabled = groupSelectable.Count > 1 && !state.IsGameOver;
             if (GUI.Button(new Rect(x + 14f, y + 28f, 376f, 28f),
                     selectedUnitGroup.Count > 1 ? $"복수 선택됨 ({selectedUnitGroup.Count}부대)" : "이 타일의 내 병력 모두 선택"))
             {
                 selectedUnitGroup.Clear();
-                for (var memberIndex = 0; memberIndex < friendly.Count; memberIndex++)
-                    selectedUnitGroup.Add(friendly[memberIndex].Id);
-                selectedUnitId = friendly[0].Id;
-                statusMessage = $"같은 타일의 병력 {friendly.Count}부대를 선택했습니다. 목적지를 우클릭하세요.";
+                for (var memberIndex = 0; memberIndex < groupSelectable.Count; memberIndex++)
+                    selectedUnitGroup.Add(groupSelectable[memberIndex].Id);
+                selectedUnitId = groupSelectable[0].Id;
+                statusMessage = $"같은 타일의 병력 {groupSelectable.Count}부대를 선택했습니다. 목적지를 우클릭하세요.";
             }
             GUI.enabled = true;
             for (var index = 0; index < units.Count && index < 4; index++)
@@ -2953,7 +3236,7 @@ namespace LittleCiv.Runtime
                 city == null
                     ? $"군량 {selected.CarriedFood}/{capacity} | 통제 중인 본토에서 조절 가능"
                     : $"군량 {selected.CarriedFood}/{capacity} → {projected}/{capacity} | 도시 비축 {city.StoredFood}");
-            GUI.enabled = city != null && !state.IsGameOver;
+            GUI.enabled = city != null && !state.IsGameOver && !IsManeuverRecommandPhase();
             if (GUI.Button(new Rect(x + 14f, foodY + 26f, 86f, 28f), "1 반환"))
                 AdjustSelectedUnitFood(selected, -1);
             if (GUI.Button(new Rect(x + 106f, foodY + 26f, 86f, 28f), "전부 반환"))
@@ -2970,7 +3253,8 @@ namespace LittleCiv.Runtime
                 var player = FindPlayer(activePlayerId);
                 var unlocked = player != null && player.UnlockedUnitTypes.Contains(promotion.Value);
                 var cost = UnitRules.TrainingGold(promotion.Value) - UnitRules.TrainingGold(selected.Type);
-                GUI.enabled = unlocked && PlannedMovementForTurn(selected) > 0 && city != null && city.Gold >= cost;
+                GUI.enabled = !IsManeuverRecommandPhase() && unlocked &&
+                              PlannedMovementForTurn(selected) > 0 && city != null && city.Gold >= cost;
                 if (GUI.Button(new Rect(x + 14f, foodY + 62f, 376f, 28f),
                     unlocked ? $"{UnitName(promotion.Value)} 승급 — 금 {cost}" : $"{UnitName(promotion.Value)}(연구 필요)"))
                     ReservePromotion(selected, promotion.Value);
@@ -2979,16 +3263,19 @@ namespace LittleCiv.Runtime
             }
             var disbandY = foodY + 62f + promotionOffset;
             var selectedTile = state.Tiles.Find(item => item.Id == selected.TileId);
-            var canPickup = selectedTile != null && selectedTile.GroundFood > 0 &&
+            var availableGroundFood = ProjectedGroundFood(selectedTile);
+            var canPickup = selectedTile != null && availableGroundFood > 0 &&
                             selected.CarriedFood < capacity;
             GUI.enabled = !state.IsGameOver && canPickup && !plannedGroundFoodPickups.ContainsKey(selected.Id);
             if (GUI.Button(new Rect(x + 14f, disbandY, 376f, 28f),
-                    canPickup ? $"현장 군량 습득 — 최대 {Mathf.Min(selectedTile.GroundFood, capacity - selected.CarriedFood)}" :
-                        "현장 군량 습득 불가"))
+                    canPickup ? $"현장 군량 습득 — 최대 {Mathf.Min(availableGroundFood, capacity - selected.CarriedFood)}" :
+                        selectedTile != null && selectedTile.GroundFood > 0 && availableGroundFood <= 0
+                            ? "현장 군량 전량 습득 예약됨"
+                            : "현장 군량 습득 불가"))
                 ReserveGroundFoodPickup(selected, selectedTile);
             GUI.enabled = true;
             disbandY += 34f;
-            GUI.enabled = !state.IsGameOver;
+            GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase();
             if (GUI.Button(new Rect(x + 14f, disbandY, 376f, 28f), "병력 해체 — 적재 군량 반환"))
             {
                 var home = state.Cities.Find(item => item.Id == selected.HomeCityId && item.OwnerId == activePlayerId);
@@ -3041,13 +3328,13 @@ namespace LittleCiv.Runtime
                     $"{UnitName(partner.Type)} {partner.Id} | 군량 {partner.CarriedFood}/{UnitRules.FoodCapacity(state, partner)}" +
                     (give != null ? $" | 주기 {give.PrimaryValue}" : string.Empty) +
                     (take != null ? $" | 받기 {take.PrimaryValue}" : string.Empty));
-                GUI.enabled = !state.IsGameOver && selected.CarriedFood > 0 &&
+                GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && selected.CarriedFood > 0 &&
                               partner.CarriedFood < UnitRules.FoodCapacity(state, partner);
                 if (GUI.Button(new Rect(x + 14f, rowY + 24f, 82f, 28f), "1 주기"))
                     AdjustFoodTransfer(selected, partner, 1);
                 if (GUI.Button(new Rect(x + 102f, rowY + 24f, 82f, 28f), "최대 주기"))
                     AdjustFoodTransfer(selected, partner, UnitRules.FoodCapacity(state, partner));
-                GUI.enabled = !state.IsGameOver && partner.CarriedFood > 0 &&
+                GUI.enabled = !state.IsGameOver && !IsManeuverRecommandPhase() && partner.CarriedFood > 0 &&
                               selected.CarriedFood < UnitRules.FoodCapacity(state, selected);
                 if (GUI.Button(new Rect(x + 210f, rowY + 24f, 82f, 28f), "1 받기"))
                     AdjustFoodTransfer(partner, selected, 1);

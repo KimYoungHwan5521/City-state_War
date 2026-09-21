@@ -114,6 +114,48 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void MilitaryNeutralBuildsAgricultureBeforeSecondMilitaryWhenFoodMarginIsTooLow()
+        {
+            var state = CreateMilitaryExpansionEconomy(13110);
+            var city = state.Cities.First(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military);
+            city.Population = 8;
+
+            var support = NeutralCityDevelopmentResolver
+                .SupportNeededForAdditionalMilitaryDistrict(state, city);
+
+            Assert.That(support, Is.EqualTo(DistrictType.Agriculture));
+        }
+
+        [Test]
+        public void MilitaryNeutralCanAddSecondMilitaryAtThreeFoodAndGoldMarginForMilitia()
+        {
+            var state = CreateMilitaryExpansionEconomy(13111);
+            var city = state.Cities.First(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military);
+
+            var support = NeutralCityDevelopmentResolver
+                .SupportNeededForAdditionalMilitaryDistrict(state, city);
+
+            Assert.That(support, Is.Null);
+        }
+
+        [Test]
+        public void MilitaryNeutralRequiresSixGoldMarginForSecondMilitaryAfterIronWorking()
+        {
+            var state = CreateMilitaryExpansionEconomy(13112);
+            var city = state.Cities.First(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military);
+            city.NeutralCompletedResearch.Add(ResearchType.School);
+            city.NeutralCompletedResearch.Add(ResearchType.IronWorking);
+
+            var support = NeutralCityDevelopmentResolver
+                .SupportNeededForAdditionalMilitaryDistrict(state, city);
+
+            Assert.That(support, Is.EqualTo(DistrictType.Commerce));
+        }
+
+        [Test]
         public void ProfessionalDistrictExpansionPrefersSameTypeAdjacency()
         {
             var state = PrototypeMatchFactory.Create(13103);
@@ -240,6 +282,17 @@ namespace LittleCiv.Tests
                 case DistrictType.Science: return TileResourceType.Science;
                 default: return TileResourceType.Culture;
             }
+        }
+
+        private static GameState CreateMilitaryExpansionEconomy(int seed)
+        {
+            var state = PrototypeMatchFactory.Create(seed);
+            var city = state.Cities.First(item => item.NeutralSpecialization ==
+                NeutralCitySpecialization.Military);
+            NeutralCityDevelopmentResolver.StartAvailableConstruction(state);
+            city.StoredFood = 100;
+            city.Gold = 100;
+            return state;
         }
     }
 }

@@ -50,6 +50,65 @@ namespace LittleCiv.Tests
             Assert.That(result.Gold.Total, Is.EqualTo(8));
         }
 
+        [Test]
+        public void ThreeMilitiaAndOneSupplyCostExactlyFourGoldWithoutPaidDistricts()
+        {
+            var state = PrototypeMatchFactory.Create(4902);
+            var city = state.Cities[1];
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var governmentTile = state.Tiles.Single(item => item.Id == government.TileId);
+            for (var index = 0; index < 2; index++)
+            {
+                state.Units.Add(new UnitState
+                {
+                    Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                    TileId = governmentTile.Id, Type = UnitType.Militia,
+                    HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia)
+                });
+            }
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = governmentTile.Id, Type = UnitType.Supply,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Supply)
+            });
+
+            var result = CityEconomyResolver.CalculateBreakdown(state, city);
+
+            Assert.That(result.UnitUpkeep, Is.EqualTo(4));
+            Assert.That(result.FacilityUpkeep, Is.Zero);
+        }
+
+        [Test]
+        public void BothPlayerCitiesPayTheirOwnFourUnitUpkeepWithoutCrossCharging()
+        {
+            var state = PrototypeMatchFactory.Create(4903);
+            var competitors = state.Players.Where(item => item.Slot != PlayerSlot.Neutral).ToArray();
+            state.Units.RemoveAll(unit => competitors.Any(player => player.Id == unit.OwnerId));
+            foreach (var player in competitors)
+            {
+                var city = state.Cities.Single(item => item.OwnerId == player.Id);
+                city.Gold = 10;
+                var government = state.Districts.Single(item => item.CityId == city.Id &&
+                    item.Type == DistrictType.Government);
+                for (var index = 0; index < 3; index++)
+                    AddUnit(state, city, government.TileId, UnitType.Militia);
+                AddUnit(state, city, government.TileId, UnitType.Supply);
+            }
+
+            new TurnProcessor().Resolve(state, new GameCommand[0]);
+
+            foreach (var player in competitors)
+            {
+                var city = state.Cities.Single(item => item.OwnerId == player.Id);
+                var result = CityEconomyResolver.CalculateBreakdown(state, city);
+                Assert.That(result.UnitUpkeep, Is.EqualTo(4), player.Slot.ToString());
+                Assert.That(result.FacilityUpkeep, Is.Zero, player.Slot.ToString());
+                Assert.That(city.Gold, Is.EqualTo(8), player.Slot + " 도시만 자기 유지비 4금을 내야 한다.");
+            }
+        }
+
         private static TileState TileAt(GameState state, CityState city, int q, int r)
         {
             var placement = state.MapTopology.FindView(city.Id).Tiles.Single(item =>
@@ -63,6 +122,16 @@ namespace LittleCiv.Tests
             {
                 Id = state.AllocateId(), CityId = city.Id, TileId = tile.Id, Type = type,
                 ControllerId = city.OwnerId, IsOperational = true, AssignedCitizens = 1
+            });
+        }
+
+        private static void AddUnit(GameState state, CityState city, EntityId tileId, UnitType type)
+        {
+            state.Units.Add(new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = city.OwnerId, HomeCityId = city.Id,
+                TileId = tileId, Type = type, HitPoints = UnitRules.MaximumHitPoints(type),
+                RemainingMovement = UnitRules.Movement(type)
             });
         }
     }

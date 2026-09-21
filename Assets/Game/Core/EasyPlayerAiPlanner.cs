@@ -21,6 +21,23 @@ namespace LittleCiv.Core
         public int EnemyTurnsToTerritory = int.MaxValue;
     }
 
+    public enum PlayerAiPromotionDeferralReason
+    {
+        None = 0,
+        NoMovement = 1,
+        OutsideOwnedHomeTerritory = 2,
+        InsufficientGold = 3,
+        EconomyUnsafe = 4
+    }
+
+    public sealed class PlayerAiPromotionDiagnostic
+    {
+        public EntityId PlayerId;
+        public EntityId UnitId;
+        public UnitType TargetType;
+        public PlayerAiPromotionDeferralReason Reason;
+    }
+
     public static class EasyPlayerAiPlanner
     {
         private static readonly ResearchType[] ScienceCore =
@@ -77,7 +94,8 @@ namespace LittleCiv.Core
             return result;
         }
 
-        public static List<GameCommand> PlanOrders(GameState state)
+        public static List<GameCommand> PlanOrders(GameState state,
+            List<PlayerAiPromotionDiagnostic> promotionDiagnostics = null)
         {
             if (state == null) throw new ArgumentNullException(nameof(state));
             var result = new List<GameCommand>();
@@ -92,7 +110,7 @@ namespace LittleCiv.Core
                 UpdatePersistentAssessment(state, player, assessment);
                 AddRepairs(state, player, city, result);
                 AddDistricts(state, player, city, assessment, result);
-                AddPromotions(state, player, city, assessment, result);
+                AddPromotions(state, player, city, assessment, result, promotionDiagnostics);
                 AddTraining(state, player, city, assessment, result);
                 AddDefense(state, player, city, assessment, result);
                 AddTradeAndLevy(state, player, city, assessment, result);
@@ -101,7 +119,33 @@ namespace LittleCiv.Core
                 AddMilitaryOrders(state, player, city, assessment, result);
                 RestoreCitizenAutomation(state, player, city, assessment, result);
             }
+            ShareCoLocatedMovePaths(state, result);
             return result;
+        }
+
+        private static void ShareCoLocatedMovePaths(GameState state, List<GameCommand> commands)
+        {
+            // A formation starting on one tile and pursuing one objective must use one route.
+            // Calculating traffic-aware paths independently made later members deliberately
+            // choose a side road, splitting AI armies before they ever met the enemy.
+            var sharedPaths = new Dictionary<string, List<EntityId>>();
+            for (var index = 0; index < commands.Count; index++)
+            {
+                var command = commands[index];
+                if (command.Type != GameCommandType.MoveUnit || command.Path == null ||
+                    command.Path.Count == 0) continue;
+                var unit = state.Units.Find(item => item.Id == command.SubjectId);
+                if (unit == null) continue;
+                var key = command.PlayerId.Value + ":" + unit.TileId.Value + ":" +
+                          command.TargetId.Value + ":" + (UnitRules.IsSupply(unit.Type) ? 1 : 0);
+                if (!sharedPaths.TryGetValue(key, out var sharedPath))
+                {
+                    sharedPaths.Add(key, new List<EntityId>(command.Path));
+                    continue;
+                }
+                command.Path.Clear();
+                command.Path.AddRange(sharedPath);
+            }
         }
 
         private static List<PlayerState> AiPlayers(GameState state) =>
@@ -121,6 +165,18 @@ namespace LittleCiv.Core
             {
                 var arts = FirstAvailable(player, new[] { ResearchType.Arts });
                 if (arts != ResearchType.None) return arts;
+            }
+
+            // Conquest needs its first real equipment tier before investing science into
+            // efficiency upgrades.  Economic expansion, rather than irrigation research alone,
+            // must carry the initial army.
+            if (player.AiStrategy == PlayerAiStrategy.Conquest)
+            {
+                var foundation = FirstAvailable(player, new[]
+                {
+                    ResearchType.School, ResearchType.IronWorking
+                });
+                if (foundation != ResearchType.None) return foundation;
             }
 
             var desired = ForceTarget(state, player, city, assessment);
@@ -474,6 +530,8 @@ namespace LittleCiv.Core
                 !HasDistrict(state, city.Id, DistrictType.NuclearFacility) &&
                 !HasPlanned(planned, player.Id, city.Id, DistrictType.NuclearFacility))
                 return DistrictType.NuclearFacility;
+            if (player.AiStrategy == PlayerAiStrategy.Conquest)
+                return NextConquestExpansionDistrict(state, player, city, planned, economy);
             if (assessment.ThreatLevel >= PlayerAiThreatLevel.Direct &&
                 CountDistricts(state, city.Id, DistrictType.Military) +
                 CountPlanned(planned, player.Id, city.Id, DistrictType.Military) < 2)
@@ -487,6 +545,59 @@ namespace LittleCiv.Core
             var specialized = player.AiStrategy == PlayerAiStrategy.Science ? DistrictType.Science :
                 player.AiStrategy == PlayerAiStrategy.Culture ? DistrictType.Culture : DistrictType.Military;
             return specialized;
+        }
+
+        private static DistrictType NextConquestExpansionDistrict(GameState state,
+            PlayerState player, CityState city, List<GameCommand> planned,
+            NeutralEconomyProjection economy)
+        {
+            var militaryDistricts = CountDistricts(state, city.Id, DistrictType.Military) +
+                                    CountPlanned(planned, player.Id, city.Id, DistrictType.Military);
+            var strongest = StrongestCombat(player);
+            var requiredFoodNet = militaryDistricts * UnitRules.FoodConsumption(strongest) * 3;
+            var requiredGoldNet = militaryDistricts * MaintenanceResolver.UnitUpkeep(strongest) * 3;
+            var projectedFoodNet = economy.FoodNet + PlannedSupportYield(state, player, city,
+                planned, DistrictType.Agriculture);
+            var projectedGoldNet = economy.GoldNet + PlannedSupportYield(state, player, city,
+                planned, DistrictType.Commerce);
+            if (projectedFoodNet < requiredFoodNet) return DistrictType.Agriculture;
+            if (projectedGoldNet < requiredGoldNet) return DistrictType.Commerce;
+            return DistrictType.Military;
+        }
+
+        private static int PlannedSupportYield(GameState state, PlayerState player,
+            CityState city, List<GameCommand> planned, DistrictType type)
+        {
+            var total = 0;
+            for (var index = 0; index < planned.Count; index++)
+            {
+                var command = planned[index];
+                if (command.PlayerId != player.Id || command.SubjectId != city.Id ||
+                    command.Type != GameCommandType.StartDistrict ||
+                    command.PrimaryValue != (int)type) continue;
+                var tile = state.Tiles.Find(item => item.Id == command.TargetId);
+                if (type == DistrictType.Agriculture)
+                {
+                    var yield = CityEconomyResolver.AgricultureFood +
+                                (tile != null && tile.ResourceType == TileResourceType.Food
+                                    ? CityEconomyResolver.AgricultureResourceBonus : 0) +
+                                (player.CompletedResearch.Contains(ResearchType.Fertilizer) ? 1 : 0);
+                    if (player.CompletedResearch.Contains(ResearchType.MechanizedAgriculture))
+                        yield = yield * 150 / 100;
+                    total += yield;
+                }
+                else if (type == DistrictType.Commerce)
+                {
+                    var yield = CityEconomyResolver.CommerceGold +
+                                (tile != null && tile.ResourceType == TileResourceType.Commerce
+                                    ? CityEconomyResolver.CommerceResourceBonus : 0) +
+                                (player.CompletedResearch.Contains(ResearchType.Currency) ? 1 : 0);
+                    if (player.CompletedResearch.Contains(ResearchType.EconomicAdministration))
+                        yield = yield * 125 / 100;
+                    total += yield;
+                }
+            }
+            return total;
         }
 
         private static void AddTraining(GameState state, PlayerState player, CityState city,
@@ -505,6 +616,8 @@ namespace LittleCiv.Core
                     command.SubjectId == item.Id && command.PrimaryValue <= 0));
             districts.Sort((left, right) => left.Id.CompareTo(right.Id));
             var budget = city.Gold - PlannedImmediateGold(state, result, player.Id);
+            var plannedFoodConsumption = 0;
+            var plannedGoldUpkeep = 0;
             for (var index = 0; index < districts.Count; index++)
             {
                 UnitType type;
@@ -528,21 +641,25 @@ namespace LittleCiv.Core
                 else break;
                 var cost = UnitRules.TrainingGold(type);
                 var projection = NeutralEconomyPlanner.Evaluate(state, city,
-                    UnitRules.FoodConsumption(type), MaintenanceResolver.UnitUpkeep(type), cost);
+                    plannedFoodConsumption + UnitRules.FoodConsumption(type),
+                    plannedGoldUpkeep + MaintenanceResolver.UnitUpkeep(type), cost);
                 var emergency = assessment.ThreatLevel == PlayerAiThreatLevel.Emergency;
                 if (budget < cost || (!projection.IsSafe && !(emergency && projection.FoodNet >= 0 &&
                     projection.GoldNet >= 0))) break;
                 budget -= cost;
+                plannedFoodConsumption += UnitRules.FoodConsumption(type);
+                plannedGoldUpkeep += MaintenanceResolver.UnitUpkeep(type);
                 result.Add(Command(state, player.Id, GameCommandType.StartTraining,
                     districts[index].Id, primary: (int)type));
             }
         }
 
         private static void AddPromotions(GameState state, PlayerState player, CityState city,
-            PlayerAiAssessment assessment, List<GameCommand> result)
+            PlayerAiAssessment assessment, List<GameCommand> result,
+            List<PlayerAiPromotionDiagnostic> diagnostics)
         {
             var units = state.Units.FindAll(item => item.OwnerId == player.Id &&
-                item.HomeCityId == city.Id && item.HitPoints > 0 && item.RemainingMovement > 0);
+                item.HomeCityId == city.Id && item.HitPoints > 0);
             units.Sort((left, right) => left.Id.CompareTo(right.Id));
             var budget = city.Gold - PlannedImmediateGold(state, result, player.Id);
             for (var index = 0; index < units.Count; index++)
@@ -550,9 +667,20 @@ namespace LittleCiv.Core
                 var target = UnitRules.IsSupply(units[index].Type)
                     ? StrongestSupply(player) : StrongestCombat(player);
                 if (target == units[index].Type || !IsHigherInBranch(units[index].Type, target)) continue;
+                if (units[index].RemainingMovement <= 0)
+                {
+                    AddPromotionDiagnostic(diagnostics, player.Id, units[index].Id, target,
+                        PlayerAiPromotionDeferralReason.NoMovement);
+                    continue;
+                }
                 var tile = state.Tiles.Find(item => item.Id == units[index].TileId);
                 if (tile == null || tile.IsSharedBoundary || tile.ControllerId != player.Id ||
-                    tile.CityId != city.Id) continue;
+                    tile.CityId != city.Id)
+                {
+                    AddPromotionDiagnostic(diagnostics, player.Id, units[index].Id, target,
+                        PlayerAiPromotionDeferralReason.OutsideOwnedHomeTerritory);
+                    continue;
+                }
                 var cost = UnitRules.TrainingGold(target) - UnitRules.TrainingGold(units[index].Type);
                 var foodDelta = UnitRules.FoodConsumption(target) - UnitRules.FoodConsumption(units[index].Type);
                 var upkeepDelta = MaintenanceResolver.UnitUpkeep(target) -
@@ -562,13 +690,37 @@ namespace LittleCiv.Core
                 var scienceEmergencyPromotion = player.AiStrategy == PlayerAiStrategy.Science &&
                     assessment.ThreatLevel >= PlayerAiThreatLevel.Potential &&
                     projection.FoodNet >= 0 && projection.GoldNet >= 0;
-                if (cost < 0 || budget < cost || (!projection.IsSafe &&
-                    assessment.ThreatLevel < PlayerAiThreatLevel.Emergency &&
-                    !scienceEmergencyPromotion)) continue;
+                if (cost < 0 || budget < cost)
+                {
+                    AddPromotionDiagnostic(diagnostics, player.Id, units[index].Id, target,
+                        PlayerAiPromotionDeferralReason.InsufficientGold);
+                    continue;
+                }
+                if (!projection.IsSafe && assessment.ThreatLevel < PlayerAiThreatLevel.Emergency &&
+                    !scienceEmergencyPromotion)
+                {
+                    AddPromotionDiagnostic(diagnostics, player.Id, units[index].Id, target,
+                        PlayerAiPromotionDeferralReason.EconomyUnsafe);
+                    continue;
+                }
                 result.Add(Command(state, player.Id, GameCommandType.PromoteUnit,
                     units[index].Id, primary: (int)target));
                 budget -= cost;
             }
+        }
+
+        private static void AddPromotionDiagnostic(List<PlayerAiPromotionDiagnostic> diagnostics,
+            EntityId playerId, EntityId unitId, UnitType target,
+            PlayerAiPromotionDeferralReason reason)
+        {
+            if (diagnostics == null) return;
+            diagnostics.Add(new PlayerAiPromotionDiagnostic
+            {
+                PlayerId = playerId,
+                UnitId = unitId,
+                TargetType = target,
+                Reason = reason
+            });
         }
 
         private static void AddTradeAndLevy(GameState state, PlayerState player, CityState city,
@@ -750,18 +902,21 @@ namespace LittleCiv.Core
                 var holdsOccupation = occupationHolds.Contains(unit.Id);
                 var supportsOccupation = UnitRules.IsSupply(unit.Type) && occupationHolds.Count > 0;
                 var supportsRelay = defendingRelay && expedition.Contains(unit.Id);
-                var mustRetreat = unitTile != null && unitTile.CityId != city.Id &&
+                var hasSafeHomeSupply = unitTile != null && unitTile.CityId == city.Id &&
+                                        unitTile.ControllerId == player.Id &&
+                                        !unitTile.IsSharedBoundary;
+                var mustRetreat = !hasSafeHomeSupply &&
                     ((!shouldAttack && !supportsRelay && !holdsOccupation && !supportsOccupation) ||
                      operationEconomyFailed || (lowFood && !holdsOccupation) || lowHealth ||
                      player.AiStrategy == PlayerAiStrategy.Conquest && player.AiNuclearPivot);
-                if (hostileInside.Count > 0 && !UnitRules.IsSupply(unit.Type))
+                if (defender != null && unit.Id == defender.Id && government != null)
+                    target = government.TileId;
+                else if (hostileInside.Count > 0 && !UnitRules.IsSupply(unit.Type))
                     target = hostileInside[0].TileId;
                 else if (mustRetreat && government != null)
                     target = government.TileId;
                 else if (holdsOccupation)
                     continue;
-                else if (defender != null && unit.Id == defender.Id && government != null)
-                    target = government.TileId;
                 else if (government != null && player.AiStrategy == PlayerAiStrategy.Science &&
                          assessment.ThreatLevel >= PlayerAiThreatLevel.Direct &&
                          !UnitRules.IsSupply(unit.Type) && governmentGuards < governmentGuardTarget)
@@ -1877,6 +2032,8 @@ namespace LittleCiv.Core
             IReadOnlyDictionary<EntityId, int> reservedTraffic = null, int formationIndex = 0)
         {
             var allowedCities = new HashSet<EntityId> { homeCityId, enemyCityId };
+            var originTile = state.Tiles.Find(item => item.Id == unit.TileId);
+            if (originTile != null) allowedCities.Add(originTile.CityId);
             return TacticalPathfinder.FindPath(state, unit, target, allowedCities,
                 reservedTraffic, formationIndex);
         }

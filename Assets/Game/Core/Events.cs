@@ -69,7 +69,8 @@ namespace LittleCiv.Core
         NeutralLevyTerminated = 62,
         ColdWarStarted = 63,
         GroundFoodPickedUp = 64,
-        PlayerCitiesExchanged = 65
+        PlayerCitiesExchanged = 65,
+        AiPromotionDeferred = 66
     }
 
     [Serializable]

@@ -117,10 +117,46 @@ namespace LittleCiv.Core
                     ? DivideRoundUp(forceTarget.Combat, 2)
                     : 1;
             var militaryCount = CountDistricts(state, city.Id, DistrictType.Military);
-            if (militaryCount < militaryGoal) return DistrictType.Military;
+            if (militaryCount < militaryGoal)
+            {
+                if (city.NeutralSpecialization == NeutralCitySpecialization.Military)
+                {
+                    var support = SupportNeededForAdditionalMilitaryDistrict(state, city);
+                    if (support.HasValue) return support.Value;
+                }
+                return DistrictType.Military;
+            }
             if (city.NeutralSpecialization == NeutralCitySpecialization.Military)
                 return DistrictType.Government;
             return specialization;
+        }
+
+        public static DistrictType? SupportNeededForAdditionalMilitaryDistrict(
+            GameState state, CityState city)
+        {
+            if (state == null) throw new ArgumentNullException(nameof(state));
+            if (city == null) throw new ArgumentNullException(nameof(city));
+            if (city.NeutralSpecialization != NeutralCitySpecialization.Military) return null;
+            var militaryCount = CountDistricts(state, city.Id, DistrictType.Military);
+            if (militaryCount <= 0) return null;
+            var strongest = StrongestCombat(city);
+            var requiredFoodNet = militaryCount * UnitRules.FoodConsumption(strongest) * 3;
+            var requiredGoldNet = militaryCount * MaintenanceResolver.UnitUpkeep(strongest) * 3;
+            var projection = NeutralEconomyPlanner.Evaluate(state, city);
+            if (projection.FoodNet < requiredFoodNet) return DistrictType.Agriculture;
+            if (projection.GoldNet < requiredGoldNet) return DistrictType.Commerce;
+            return null;
+        }
+
+        private static UnitType StrongestCombat(CityState city)
+        {
+            if (NeutralResearchResolver.HasResearch(city, ResearchType.Vehicles))
+                return UnitType.MechanizedInfantry;
+            if (NeutralResearchResolver.HasResearch(city, ResearchType.Gunpowder))
+                return UnitType.GunpowderInfantry;
+            if (NeutralResearchResolver.HasResearch(city, ResearchType.IronWorking))
+                return UnitType.IronInfantry;
+            return UnitType.Militia;
         }
 
         private static int DivideRoundUp(int value, int divisor) =>

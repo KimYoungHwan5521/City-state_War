@@ -231,6 +231,9 @@ namespace LittleCiv.Core
                             recoveries[recoveryIndex].UnitId,
                             primaryValue: recoveries[recoveryIndex].RecoveredHitPoints));
                     }
+                    var unitsBeforeStarvation = new Dictionary<EntityId, UnitState>();
+                    for (var unitIndex = 0; unitIndex < state.Units.Count; unitIndex++)
+                        unitsBeforeStarvation[state.Units[unitIndex].Id] = state.Units[unitIndex];
                     var starvation = UnitStarvationResolver.ResolveFirstFailure(
                         state,
                         foodConsumption.SuppliedUnitIds,
@@ -257,14 +260,18 @@ namespace LittleCiv.Core
                          starvationIndex < starvation.StarvedToDeathUnitIds.Count;
                          starvationIndex++)
                     {
+                        var starvedUnitId = starvation.StarvedToDeathUnitIds[starvationIndex];
+                        var refundedUpkeep = RefundStarvedUnitUpkeep(
+                            state, unitsBeforeStarvation, starvedUnitId);
                         resolution.Events.Add(CreateEvent(
                             turnNumber,
                             GameEventType.UnitStarvedToDeath,
-                            starvation.StarvedToDeathUnitIds[starvationIndex]));
+                            starvedUnitId,
+                            primaryValue: refundedUpkeep));
                         resolution.Events.Add(CreateEvent(
                             turnNumber,
                             GameEventType.UnitDestroyed,
-                            starvation.StarvedToDeathUnitIds[starvationIndex]));
+                            starvedUnitId));
                     }
                     CityFoodResolver.ResolveStorage(state);
                 }
@@ -345,8 +352,21 @@ namespace LittleCiv.Core
                 }
                 if (phase == TurnPhase.TradeAndOrders)
                 {
-                    sortedCommands.AddRange(EasyPlayerAiPlanner.PlanOrders(state));
+                    var promotionDiagnostics = new List<PlayerAiPromotionDiagnostic>();
+                    sortedCommands.AddRange(EasyPlayerAiPlanner.PlanOrders(state, promotionDiagnostics));
                     sortedCommands = CopyAndSort(sortedCommands);
+                    for (var diagnosticIndex = 0;
+                         diagnosticIndex < promotionDiagnostics.Count;
+                         diagnosticIndex++)
+                    {
+                        var diagnostic = promotionDiagnostics[diagnosticIndex];
+                        resolution.Events.Add(CreateEvent(turnNumber,
+                            GameEventType.AiPromotionDeferred,
+                            diagnostic.PlayerId,
+                            diagnostic.UnitId,
+                            (int)diagnostic.Reason,
+                            (int)diagnostic.TargetType));
+                    }
                 }
                 ResolveCommandsForPhase(state, sortedCommands, phase, seenCommandIds, resolution);
 
@@ -544,6 +564,24 @@ namespace LittleCiv.Core
             resolution.Events.Add(CreateEvent(turnNumber, GameEventType.TurnEnded));
             resolution.ResultStateHash = GameStateHasher.Compute(state);
             return resolution;
+        }
+
+        private static int RefundStarvedUnitUpkeep(GameState state,
+            IReadOnlyDictionary<EntityId, UnitState> unitsBeforeStarvation, EntityId unitId)
+        {
+            if (!unitsBeforeStarvation.TryGetValue(unitId, out var unit)) return 0;
+            var city = unit.HomeCityId.IsValid
+                ? state.Cities.Find(item => item.Id == unit.HomeCityId)
+                : null;
+            if (city == null)
+            {
+                var tile = state.Tiles.Find(item => item.Id == unit.TileId);
+                city = tile == null ? null : state.Cities.Find(item => item.Id == tile.CityId);
+            }
+            if (city == null || city.OwnerId != unit.OwnerId) return 0;
+            var refund = MaintenanceResolver.UnitUpkeep(unit.Type);
+            city.Gold += refund;
+            return refund;
         }
 
         private static CityState FindCity(GameState state, EntityId cityId)

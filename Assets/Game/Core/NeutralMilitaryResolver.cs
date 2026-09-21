@@ -413,14 +413,15 @@ namespace LittleCiv.Core
                 if (combatNeeded > 0)
                 {
                     type = StrongestCombat(city);
-                    combatNeeded--;
                 }
                 else if (supplyNeeded > 0)
                 {
                     type = StrongestSupply(city);
-                    supplyNeeded--;
                 }
                 if (!type.HasValue) break;
+                if (!HasDeploymentSpace(state, districts[index].TileId, type.Value)) continue;
+                if (UnitRules.IsSupply(type.Value)) supplyNeeded--;
+                else combatNeeded--;
                 if (!CanSustainTraining(state, city, type.Value, target.IsCriticalThreat))
                 {
                     if (UnitRules.IsSupply(type.Value)) supplyNeeded++;
@@ -438,6 +439,19 @@ namespace LittleCiv.Core
                 else if (UnitRules.IsSupply(type.Value)) supplyNeeded++;
                 else combatNeeded++;
             }
+        }
+
+        private static bool HasDeploymentSpace(GameState state, EntityId tileId, UnitType type)
+        {
+            var supply = UnitRules.IsSupply(type);
+            var count = 0;
+            for (var index = 0; index < state.Units.Count; index++)
+            {
+                var unit = state.Units[index];
+                if (unit.TileId == tileId && unit.HitPoints > 0 &&
+                    UnitRules.IsSupply(unit.Type) == supply) count++;
+            }
+            return count < (supply ? UnitRules.SupplyUnitsPerTile : UnitRules.CombatUnitsPerTile);
         }
 
         public static bool CanSustainTraining(GameState state, CityState city, UnitType type,

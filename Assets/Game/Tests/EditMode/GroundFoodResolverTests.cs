@@ -157,6 +157,42 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void TwoUnitsCanSequentiallyPickupRemainingGroundFoodInOnePlanningBatch()
+        {
+            var fixture = CreateFixture(false);
+            fixture.State.Units.Remove(fixture.Defender);
+            fixture.Attacker.TileId = fixture.Tile.Id;
+            fixture.Attacker.CarriedFood = 4;
+            var second = Unit(fixture.State, fixture.Attacker.OwnerId, fixture.Tile.Id);
+            second.CarriedFood = 3;
+            fixture.State.Units.Add(second);
+            fixture.Tile.GroundFood = 5;
+            fixture.Tile.GroundFoodOwnerId = fixture.Defender.OwnerId;
+            var firstCommand = new GameCommand
+            {
+                PlayerId = fixture.Attacker.OwnerId, SubjectId = fixture.Attacker.Id,
+                PrimaryValue = int.MaxValue
+            };
+            var secondCommand = new GameCommand
+            {
+                PlayerId = second.OwnerId, SubjectId = second.Id, PrimaryValue = int.MaxValue
+            };
+
+            Assert.That(GroundFoodResolver.TryPickup(fixture.State, firstCommand,
+                out var firstAmount), Is.True);
+            Assert.That(GroundFoodResolver.TryPickup(fixture.State, secondCommand,
+                out var secondAmount), Is.True);
+
+            Assert.That(firstAmount, Is.EqualTo(2));
+            Assert.That(secondAmount, Is.EqualTo(3));
+            Assert.That(fixture.Attacker.CarriedFood, Is.EqualTo(6));
+            Assert.That(second.CarriedFood, Is.EqualTo(6));
+            Assert.That(fixture.Tile.GroundFood, Is.Zero);
+            Assert.That(fixture.Tile.GroundFoodOwnerId.IsValid, Is.False);
+            Assert.That(fixture.Tile.GroundFoodReturnTurn, Is.Zero);
+        }
+
+        [Test]
         public void UnitAutomaticallyFillsFromGroundFoodBeforeLeavingTile()
         {
             var fixture = CreateFixture(false);

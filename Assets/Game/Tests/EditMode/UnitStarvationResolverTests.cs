@@ -96,11 +96,17 @@ namespace LittleCiv.Tests
             processor.Resolve(state, new GameCommand[0]);
             Assert.That(state.Units.Contains(unit), Is.True);
             Assert.That(unit.IsStarving, Is.True);
+            var home = state.Cities.Single(item => item.Id == unit.HomeCityId);
+            var goldBeforeDeathTurn = home.Gold;
+            var goldProduction = CityEconomyResolver.CalculateBreakdown(state, home).Gold.Total;
             var second = processor.Resolve(state, new GameCommand[0]);
 
             Assert.That(state.Units.Contains(unit), Is.False);
+            Assert.That(home.Gold, Is.EqualTo(goldBeforeDeathTurn + goldProduction),
+                "아사한 병력은 해당 턴에 먼저 차감된 유지비를 전액 돌려받아야 한다.");
             Assert.That(second.Events.Any(item => item.Type == GameEventType.UnitStarvedToDeath &&
-                item.SourceId == unit.Id), Is.True);
+                item.SourceId == unit.Id && item.PrimaryValue == MaintenanceResolver.UnitUpkeep(unit.Type)),
+                Is.True);
             Assert.That(second.Events.Any(item => item.Type == GameEventType.UnitDestroyed &&
                 item.SourceId == unit.Id), Is.True);
         }

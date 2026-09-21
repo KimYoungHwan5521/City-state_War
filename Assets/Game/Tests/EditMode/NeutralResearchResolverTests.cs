@@ -261,6 +261,85 @@ namespace LittleCiv.Tests
         }
 
         [Test]
+        public void AiPromotionDiagnosticsExplainWhyUnlockedIronUpgradeWasDeferred()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(13218, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            ai.CompletedResearch.Add(ResearchType.School);
+            ai.CompletedResearch.Add(ResearchType.IronWorking);
+            if (!ai.UnlockedUnitTypes.Contains(UnitType.IronInfantry))
+                ai.UnlockedUnitTypes.Add(UnitType.IronInfantry);
+            city.Gold = 0;
+            var militia = state.Units.Single(item => item.OwnerId == ai.Id &&
+                item.Type == UnitType.Militia);
+            militia.RemainingMovement = UnitRules.Movement(militia.Type);
+            var diagnostics = new System.Collections.Generic.List<PlayerAiPromotionDiagnostic>();
+
+            var commands = EasyPlayerAiPlanner.PlanOrders(state, diagnostics);
+
+            Assert.That(commands.Any(item => item.Type == GameCommandType.PromoteUnit &&
+                item.SubjectId == militia.Id), Is.False);
+            Assert.That(diagnostics.Any(item => item.UnitId == militia.Id &&
+                item.TargetType == UnitType.IronInfantry &&
+                item.Reason == PlayerAiPromotionDeferralReason.InsufficientGold), Is.True);
+        }
+
+        [Test]
+        public void ConquestAiResearchesIronBeforeUnsafeFoodEfficiencyResearch()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(13219, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            ai.CompletedResearch.Add(ResearchType.School);
+            city.StoredFood = 0;
+
+            var selected = EasyPlayerAiPlanner.ChooseResearch(state, ai, city,
+                EasyPlayerAiPlanner.Assess(state, ai, city));
+
+            Assert.That(selected, Is.EqualTo(ResearchType.IronWorking));
+        }
+
+        [Test]
+        public void ConquestAiBuildsAgricultureBeforeSecondMilitaryWhenMilitiaFoodMarginIsBelowThree()
+        {
+            var state = CreateConquestDistrictExpansionState(13220, foodBonus: 0, goldBonus: 0);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+
+            var construction = EasyPlayerAiPlanner.PlanOrders(state).First(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.StartDistrict);
+
+            Assert.That((DistrictType)construction.PrimaryValue, Is.EqualTo(DistrictType.Agriculture));
+        }
+
+        [Test]
+        public void ConquestAiAddsSecondMilitaryWhenMilitiaFoodAndGoldMarginsReachThree()
+        {
+            var state = CreateConquestDistrictExpansionState(13221, foodBonus: 1, goldBonus: 0);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+
+            var construction = EasyPlayerAiPlanner.PlanOrders(state).First(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.StartDistrict);
+
+            Assert.That((DistrictType)construction.PrimaryValue, Is.EqualTo(DistrictType.Military));
+        }
+
+        [Test]
+        public void ConquestAiRequiresSixGoldMarginForSecondMilitaryAfterIronWorking()
+        {
+            var state = CreateConquestDistrictExpansionState(13222, foodBonus: 1, goldBonus: 0);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            ai.CompletedResearch.Add(ResearchType.School);
+            ai.CompletedResearch.Add(ResearchType.IronWorking);
+            ai.UnlockedUnitTypes.Add(UnitType.IronInfantry);
+
+            var construction = EasyPlayerAiPlanner.PlanOrders(state).First(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.StartDistrict);
+
+            Assert.That((DistrictType)construction.PrimaryValue, Is.EqualTo(DistrictType.Commerce));
+        }
+
+        [Test]
         public void TwoAiPlayersKeepInitialDistrictReservationsScopedToTheirOwnCities()
         {
             var state = PrototypeMatchFactory.Create(13211);
@@ -943,6 +1022,10 @@ namespace LittleCiv.Tests
             Assert.That(raidOrders.Count(item => item.TargetId == raidTile.TileId),
                 Is.GreaterThanOrEqualTo(2));
             Assert.That(raidOrders.Any(item => item.TargetId == enemyGovernment.TileId), Is.False);
+            var groupedRaid = raidOrders.Where(item => item.TargetId == raidTile.TileId).ToList();
+            Assert.That(groupedRaid.Skip(1).All(item =>
+                item.Path.SequenceEqual(groupedRaid[0].Path)), Is.True,
+                "같은 타일에서 같은 목표로 출정하는 AI 전투부대는 선두와 전체 경로를 공유해야 한다.");
 
             state.Units.RemoveAll(item => reinforcements.Any(reinforcement =>
                 reinforcement.Id == item.Id));
@@ -953,6 +1036,44 @@ namespace LittleCiv.Tests
             Assert.That(assaultOrders.Count(item => item.TargetId == enemyGovernment.TileId),
                 Is.GreaterThanOrEqualTo(2),
                 "정부청사 돌파전력이 확보되면 제한 약탈보다 정복 공세로 전환해야 한다.");
+            var groupedAssault = assaultOrders.Where(item =>
+                item.TargetId == enemyGovernment.TileId).ToList();
+            Assert.That(groupedAssault.Skip(1).All(item =>
+                item.Path.SequenceEqual(groupedAssault[0].Path)), Is.True,
+                "같은 출발지의 정부청사 공격대는 서로 다른 우회로로 갈라지지 않아야 한다.");
+        }
+
+        [Test]
+        public void ConquestAiKeepsGovernmentGuardWhenCounterattackingInvaderInsideHomeCity()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14514, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var enemy = state.Players.Single(item => item.Slot == PlayerSlot.PlayerOne);
+            var home = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var enemyCity = state.Cities.Single(item => item.OwnerId == enemy.Id);
+            home.Gold = 300;
+            home.StoredFood = 300;
+            home.TestGovernmentFoodBonus = 60;
+            home.TestGovernmentGoldBonus = 60;
+            var government = state.Districts.Single(item => item.CityId == home.Id &&
+                item.Type == DistrictType.Government);
+            var guard = state.Units.Single(item => item.OwnerId == ai.Id &&
+                item.TileId == government.TileId);
+            AddAiUnit(state, ai, home, government.TileId, UnitType.IronInfantry, 6);
+            AddAiUnit(state, ai, home, government.TileId, UnitType.IronInfantry, 6);
+            var invadedTile = state.MapTopology.FindView(home.Id).Tiles.First(item =>
+                item.IsBuildable && item.TileId != government.TileId);
+            AddAiUnit(state, enemy, enemyCity, invadedTile.TileId,
+                UnitType.MechanizedInfantry, 10);
+
+            var movements = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.MoveUnit).ToList();
+
+            Assert.That(movements.Any(item => item.SubjectId == guard.Id), Is.False,
+                "영토 내 적을 반격할 때에도 정부청사 최소 수비군 한 기는 이탈하면 안 된다.");
+            Assert.That(movements.Any(item => item.SubjectId != guard.Id &&
+                item.TargetId == invadedTile.TileId), Is.True,
+                "남는 병력은 영토에 진입한 적을 반격해야 한다.");
         }
 
         [Test]
@@ -1056,6 +1177,63 @@ namespace LittleCiv.Tests
             Assert.That(commands.Any(item => item.Type == GameCommandType.StartTraining &&
                 item.SubjectId == military.Id &&
                 !UnitRules.IsSupply((UnitType)item.PrimaryValue)), Is.True);
+        }
+
+        [Test]
+        public void ConquestAiAggregatesMultipleSameTurnTrainingUpkeepBeforeOrdering()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14549, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            state.Units.RemoveAll(item => item.OwnerId == ai.Id);
+            city.StoredFood = 100;
+            city.Gold = 100;
+            var emptyTiles = state.MapTopology.FindView(city.Id).Tiles.Where(item =>
+                item.IsBuildable && state.Districts.All(district => district.TileId != item.TileId))
+                .Take(2).ToArray();
+            foreach (var tile in emptyTiles)
+                state.Districts.Add(new DistrictState
+                {
+                    Id = state.AllocateId(), CityId = city.Id, TileId = tile.TileId,
+                    Type = DistrictType.Military, ControllerId = ai.Id,
+                    AssignedCitizens = 1, IsOperational = true
+                });
+
+            var trainings = EasyPlayerAiPlanner.PlanOrders(state).Where(item =>
+                item.PlayerId == ai.Id && item.Type == GameCommandType.StartTraining).ToList();
+
+            Assert.That(trainings.Count, Is.EqualTo(1),
+                "같은 턴의 두 번째 훈련은 첫 훈련의 미래 식량·금 유지비까지 합산해 거절해야 한다.");
+        }
+
+        [Test]
+        public void ConquestAiReturnsBorrowedUnitFromNeutralOriginBeforeFoodRunsOut()
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(14551, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            var government = state.Districts.Single(item => item.CityId == city.Id &&
+                item.Type == DistrictType.Government);
+            var neutralCity = state.Cities.First(item => item.OwnerId != ai.Id &&
+                state.Players.Single(player => player.Id == item.OwnerId).Slot == PlayerSlot.Neutral);
+            var neutralGovernment = state.Districts.Single(item => item.CityId == neutralCity.Id &&
+                item.Type == DistrictType.Government);
+            var borrowed = new UnitState
+            {
+                Id = state.AllocateId(), OwnerId = ai.Id, HomeCityId = city.Id,
+                TileId = neutralGovernment.TileId, Type = UnitType.Militia,
+                HitPoints = UnitRules.MaximumHitPoints(UnitType.Militia),
+                CarriedFood = 2, RemainingMovement = UnitRules.Movement(UnitType.Militia)
+            };
+            state.Units.Add(borrowed);
+            ai.AiNuclearPivot = true;
+
+            var movement = EasyPlayerAiPlanner.PlanOrders(state).Single(item =>
+                item.Type == GameCommandType.MoveUnit && item.SubjectId == borrowed.Id);
+
+            Assert.That(movement.TargetId, Is.EqualTo(government.TileId));
+            Assert.That(movement.Path, Is.Not.Empty,
+                "중립도시에서 출발하는 징병 병력도 출발 도시를 허용 경로에 넣어 귀환해야 한다.");
         }
 
         [Test]
@@ -1242,6 +1420,38 @@ namespace LittleCiv.Tests
                     IsOperational = true, AssignedCitizens = 1
                 });
             }
+            return state;
+        }
+
+        private static GameState CreateConquestDistrictExpansionState(int seed,
+            int foodBonus, int goldBonus)
+        {
+            var state = PrototypeMatchFactory.CreateSinglePlayer(seed, PlayerAiStrategy.Conquest);
+            var ai = state.Players.Single(item => item.Slot == PlayerSlot.PlayerTwo);
+            var city = state.Cities.Single(item => item.OwnerId == ai.Id);
+            city.Population = 5;
+            city.GovernmentCitizens = 1;
+            city.StoredFood = 100;
+            city.Gold = 100;
+            city.TestGovernmentFoodBonus = foodBonus;
+            city.TestGovernmentGoldBonus = goldBonus;
+            state.Districts.RemoveAll(item => item.CityId == city.Id &&
+                item.Type != DistrictType.Government);
+            var tiles = state.MapTopology.FindView(city.Id).Tiles.Where(item => item.IsBuildable &&
+                state.Districts.All(district => district.TileId != item.TileId) &&
+                state.Tiles.Single(tile => tile.Id == item.TileId).ResourceType == TileResourceType.None)
+                .Take(3).ToArray();
+            var types = new[]
+            {
+                DistrictType.Agriculture, DistrictType.Commerce, DistrictType.Military
+            };
+            for (var index = 0; index < types.Length; index++)
+                state.Districts.Add(new DistrictState
+                {
+                    Id = state.AllocateId(), CityId = city.Id, TileId = tiles[index].TileId,
+                    Type = types[index], ControllerId = ai.Id, AssignedCitizens = 1,
+                    IsOperational = true
+                });
             return state;
         }
 
